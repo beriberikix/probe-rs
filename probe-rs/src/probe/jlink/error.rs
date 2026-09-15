@@ -15,6 +15,10 @@ pub enum JlinkError {
     /// permission to access it.
     Usb(#[from] nusb::Error),
 
+    #[error("An IO error occurred during a USB transfer.")]
+    /// An IO error occurred while performing a bulk transfer.
+    Io(#[from] std::io::Error),
+
     #[error("device is missing capabilities ({0:?}) for operation")]
     /// An operation was attempted that is not supported by the probe.
     ///

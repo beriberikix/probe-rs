@@ -89,12 +89,12 @@ impl ProtocolHandler {
     ) -> Result<Self, ProbeCreationError> {
         let device = crate::probe::list::list_devices()
             .await
-            .map_err(ProbeCreationError::Usb)?
+            .map_err(|e| ProbeCreationError::Usb(e.into()))?
             .filter(is_espjtag_device)
             .find(|device| selector.matches(device))
             .ok_or(ProbeCreationError::NotFound)?;
 
-        let device_handle = device.open().await.map_err(ProbeCreationError::Usb)?;
+        let device_handle = device.open().await.map_err(|e| ProbeCreationError::Usb(e.into()))?;
 
         tracing::debug!("Aquired handle for probe");
 
@@ -155,7 +155,7 @@ impl ProtocolHandler {
         let iface = device_handle
             .claim_interface(interface_number)
             .await
-            .map_err(ProbeCreationError::Usb)?;
+            .map_err(|e| ProbeCreationError::Usb(e.into()))?;
 
         let start = Instant::now();
         let buffer = loop {
@@ -167,7 +167,7 @@ impl ProtocolHandler {
                     USB_TIMEOUT,
                 )
                 .await
-                .map_err(ProbeCreationError::Usb)?;
+                .map_err(|e| ProbeCreationError::Usb(e.into()))?;
             if !buffer.is_empty() {
                 break buffer;
             }
@@ -454,7 +454,7 @@ impl ProtocolHandler {
                 .device_handle
                 .write_bulk(self.ep_out, commands, USB_TIMEOUT)
                 .await
-                .map_err(DebugProbeError::Usb)?;
+                .map_err(|e| DebugProbeError::Usb(e.into()))?;
 
             commands = &commands[bytes..];
         }

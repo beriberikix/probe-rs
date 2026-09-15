@@ -24,7 +24,7 @@ impl WchLinkUsbDevice {
     ) -> Result<Self, ProbeCreationError> {
         let device = crate::probe::list::list_devices()
             .await
-            .map_err(ProbeCreationError::Usb)?
+            .map_err(|e| ProbeCreationError::Usb(e.into()))?
             .filter(|device| selector.matches(device))
             .find(|device| get_wlink_info(device).is_some())
             .ok_or(ProbeCreationError::NotFound)?;
@@ -32,7 +32,7 @@ impl WchLinkUsbDevice {
         let mut endpoint_out = false;
         let mut endpoint_in = false;
 
-        let device_handle = device.open().await.map_err(ProbeCreationError::Usb)?;
+        let device_handle = device.open().await.map_err(|e| ProbeCreationError::Usb(e.into()))?;
 
         let mut configs = device_handle.configurations();
         if let Some(config) = configs.next() {
@@ -57,7 +57,7 @@ impl WchLinkUsbDevice {
         let device_handle = device_handle
             .claim_interface(0)
             .await
-            .map_err(ProbeCreationError::Usb)?;
+            .map_err(|e| ProbeCreationError::Usb(e.into()))?;
         tracing::trace!("Claimed interface 0 of USB device.");
 
         let usb_wlink = Self { device_handle };
@@ -82,7 +82,7 @@ impl WchLinkUsbDevice {
             .device_handle
             .write_bulk(ENDPOINT_OUT, &rxbuf[..len], timeout)
             .await
-            .map_err(DebugProbeError::Usb)?;
+            .map_err(|e| DebugProbeError::Usb(e.into()))?;
 
         if written_bytes != len {
             return Err(WchLinkError::NotEnoughBytesWritten {
@@ -97,7 +97,7 @@ impl WchLinkUsbDevice {
             .device_handle
             .read_bulk(ENDPOINT_IN, &mut rxbuf[..], timeout)
             .await
-            .map_err(DebugProbeError::Usb)?;
+            .map_err(|e| DebugProbeError::Usb(e.into()))?;
 
         if read_bytes < 3 {
             return Err(WchLinkError::NotEnoughBytesRead {

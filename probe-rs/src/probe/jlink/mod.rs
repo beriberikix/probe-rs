@@ -85,7 +85,7 @@ impl ProbeFactory for JLinkFactory {
 
         let mut jlinks = crate::probe::list::list_devices()
             .await
-            .map_err(DebugProbeError::Usb)?
+            .map_err(|e| DebugProbeError::Usb(e.into()))?
             .filter(is_jlink)
             .filter(|info| selector.matches(info))
             .collect::<Vec<_>>();
@@ -103,7 +103,7 @@ impl ProbeFactory for JLinkFactory {
         let handle = info
             .open()
             .await
-            .map_err(|e| open_error(e, "opening the USB device"))?;
+            .map_err(|e| open_error(e.into(), "opening the USB device"))?;
 
         let configs: Vec<_> = handle.configurations().collect();
 
@@ -180,7 +180,7 @@ impl ProbeFactory for JLinkFactory {
         let handle = handle
             .claim_interface(intf)
             .await
-            .map_err(|e| open_error(e, "taking control over USB device"))?;
+            .map_err(|e| open_error(e.into(), "taking control over USB device"))?;
 
         let mut this = JLink {
             read_ep,

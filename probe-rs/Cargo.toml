@@ -44,7 +44,7 @@ bitvec = "1"
 # ], path = "../../../hidapi-rs" }
 hidapi = { version = "2", default-features = false, features = [
     "linux-native",
-], git = "https://github.com/Yatekii/hidapi-rs", branch = "task/webusb" }
+], path = "../../hidapi-rs" }
 ihex = "3.0"
 itertools = "0.14"
 jep106 = "0.3"
@@ -55,7 +55,7 @@ object = { version = "0.36", default-features = false, features = [
     "std",
 ] }
 # nusb = { version = "0.2.0-beta", path = "../../../nusb" }
-nusb = { version = "0.2.0-beta", git = "https://github.com/Yatekii/nusb", branch = "task/webusb" }
+nusb = "0.2.7"
 futures-lite = { version = "2", default-features = false }
 
 scroll = "0.12"
@@ -85,6 +85,10 @@ web-sys = { version = "0.3", features = ["Window", "WorkerGlobalScope"] }
 
 [target.'cfg(not(target_arch="wasm32"))'.dependencies]
 async-io = "2"
+# nusb 0.2.x runs blocking syscalls on a helper task when its APIs are awaited;
+# without a runtime feature it panics at maybe_future.rs:139. Not needed on wasm,
+# where WebUSB is natively async and `blocking` would not build anyway.
+nusb = { version = "0.2.7", features = ["smol"] }
 
 [build-dependencies]
 probe-rs-target = { workspace = true, optional = true }
@@ -105,6 +109,7 @@ test-log = { version = "0.2.16", features = ["trace"] }
 termtree = "0.5"
 insta = { version = "1.38", default-features = false }
 pollster = { version = "0.4", features = ["macro"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [[package.metadata.release.pre-release-replacements]]
 file = "../CHANGELOG.md"

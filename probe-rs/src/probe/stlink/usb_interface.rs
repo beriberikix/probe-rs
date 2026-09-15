@@ -115,14 +115,14 @@ impl StLinkUsbDevice {
     ) -> Result<Self, ProbeCreationError> {
         let device = crate::probe::list::list_devices()
             .await
-            .map_err(ProbeCreationError::Usb)?
+            .map_err(|e| ProbeCreationError::Usb(e.into()))?
             .filter(is_stlink_device)
             .find(|device| selector_matches(selector, device))
             .ok_or(ProbeCreationError::NotFound)?;
 
         let info = USB_PID_EP_MAP[&device.product_id()].clone();
 
-        let device_handle = device.open().await.map_err(ProbeCreationError::Usb)?;
+        let device_handle = device.open().await.map_err(|e| ProbeCreationError::Usb(e.into()))?;
         tracing::debug!("Aquired handle for probe");
 
         let mut endpoint_out = false;
@@ -157,7 +157,7 @@ impl StLinkUsbDevice {
         let interface = device_handle
             .claim_interface(0)
             .await
-            .map_err(ProbeCreationError::Usb)?;
+            .map_err(|e| ProbeCreationError::Usb(e.into()))?;
 
         tracing::debug!("Claimed interface 0 of USB device.");
 
@@ -280,7 +280,7 @@ impl StLinkUsb for StLinkUsbDevice {
             self.interface
                 .read_bulk(ep_swo, read_data, timeout)
                 .await
-                .map_err(StlinkError::Usb)
+                .map_err(|e| StlinkError::Usb(e.into()))
         }
     }
 
@@ -288,6 +288,6 @@ impl StLinkUsb for StLinkUsbDevice {
     /// STLink does not respond to USB requests.
     async fn reset(&mut self) -> Result<(), StlinkError> {
         tracing::debug!("Resetting USB device of STLink");
-        self.device_handle.reset().await.map_err(StlinkError::Usb)
+        self.device_handle.reset().await.map_err(|e| StlinkError::Usb(e.into()))
     }
 }
