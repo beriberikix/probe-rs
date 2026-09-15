@@ -243,6 +243,18 @@ impl CmsisDapDevice {
                 max_packet_size,
                 ..
             } => {
+                // This drains by deliberately letting a read time out, which is
+                // fine natively (the transfer is cancelled) but destructive on
+                // WebUSB: the spec exposes no way to abort an in-flight transfer
+                // (https://github.com/WICG/webusb/issues/25), so the timed-out
+                // transferIn stays queued and consumes the NEXT response - the
+                // reply to DAP_Info - making open() fail with a read timeout.
+                // A freshly claimed interface has nothing pending anyway.
+                if cfg!(target_arch = "wasm32") {
+                    tracing::debug!("Skipping drain on wasm: transfers cannot be cancelled.");
+                    return;
+                }
+
                 let timeout = Duration::from_millis(1);
                 let mut discard = vec![0u8; *max_packet_size];
                 loop {

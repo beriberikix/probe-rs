@@ -164,17 +164,34 @@ pub async fn open_v2_device(device_info: &DeviceInfo) -> Option<CmsisDapDevice> 
     for interface in c_desc.interfaces() {
         for i_desc in interface.alt_settings() {
             tracing::debug!("Found interface {:#?}", i_desc);
-            // Skip interfaces without "CMSIS-DAP" like pattern in their string
-            let Some(interface_str) = device_info
+            // Normally we skip interfaces without a "CMSIS-DAP" like pattern in
+            // their string. WebUSB, however, does not expose interface string
+            // descriptors at all - Chrome reports interfaceName as null for
+            // every interface - so requiring one makes every CMSIS-DAPv2 probe
+            // undetectable in the browser. When the string is missing, fall back
+            // to structural detection: a vendor-specific interface whose
+            // endpoints match the v2 shape, which is checked just below.
+            match device_info
                 .interfaces()
                 .find(|i| i.interface_number() == interface.interface_number())
                 .and_then(|i| i.interface_string())
-            else {
-                continue;
-            };
-            tracing::debug!("with name {}", interface_str);
-            if !is_cmsis_dap(interface_str) {
-                continue;
+            {
+                Some(interface_str) => {
+                    tracing::debug!("with name {}", interface_str);
+                    if !is_cmsis_dap(interface_str) {
+                        continue;
+                    }
+                }
+                None => {
+                    tracing::debug!(
+                        "interface {} has no string descriptor; falling back to \
+                         class/endpoint detection",
+                        interface.interface_number()
+                    );
+                    if i_desc.class() != 0xFF {
+                        continue;
+                    }
+                }
             }
             tracing::info!("passed");
 
