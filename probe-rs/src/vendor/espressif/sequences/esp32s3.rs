@@ -217,7 +217,9 @@ impl XtensaDebugSequence for ESP32S3 {
             other => other?,
         }
 
-        std::thread::sleep(Duration::from_millis(100));
+        // Not std::thread::sleep: it panics on wasm32 and would in any case block
+        // the browser event loop, preventing the USB futures below from resolving.
+        crate::probe::usb_util::wait(Duration::from_millis(100)).await;
 
         let start = Instant::now();
         tracing::debug!("Waiting for program to complete");

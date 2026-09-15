@@ -362,8 +362,9 @@ pub(crate) async fn wait_for_core_halted(
         if start.elapsed() >= timeout {
             return Err(ArmError::Timeout);
         }
-        // Wait a bit before polling again.
-        std::thread::sleep(Duration::from_millis(1));
+        // Wait a bit before polling again. Not std::thread::sleep: it panics on
+        // wasm32 and would block the event loop the USB futures depend on.
+        crate::probe::usb_util::wait(Duration::from_millis(1)).await;
     }
 
     Ok(())

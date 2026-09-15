@@ -111,7 +111,7 @@ impl RiscvDebugSequence for ESP32H2 {
         dmcontrol.set_resumereq(true);
         interface.write_dm_register(dmcontrol).await?;
 
-        std::thread::sleep(Duration::from_millis(10));
+        crate::probe::usb_util::wait(Duration::from_millis(10)).await;
 
         let mut dmcontrol = Dmcontrol(0);
         dmcontrol.set_dmactive(true);

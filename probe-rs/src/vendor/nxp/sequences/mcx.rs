@@ -1,10 +1,10 @@
 //! Sequences for NXP MCX chips.
 
-use std::{
-    sync::Arc,
-    thread,
-    time::{Duration, Instant},
-};
+use std::{sync::Arc, time::Duration};
+
+// std::time::Instant panics on wasm32-unknown-unknown; web_time::Instant is the
+// portable shim the rest of the crate already uses.
+use web_time::Instant;
 
 use bitfield::BitMut;
 use debugmailbox::{DMCSW, DMREQUEST};
@@ -156,7 +156,7 @@ impl MCX {
         interface
             .write_raw_ap_register(&ap, DMCSW::ADDRESS, 0x0000_0021)
             .await?;
-        thread::sleep(Duration::from_millis(30));
+        crate::probe::usb_util::wait(Duration::from_millis(30)).await;
         interface.read_raw_ap_register(&ap, 0x0).await?;
         interface.flush().await?;
 
@@ -164,7 +164,7 @@ impl MCX {
         interface
             .write_raw_ap_register(&ap, DMREQUEST::ADDRESS, 0x0000_0007)
             .await?;
-        thread::sleep(Duration::from_millis(30));
+        crate::probe::usb_util::wait(Duration::from_millis(30)).await;
         interface.read_raw_ap_register(&ap, 0x0).await?;
         interface.flush().await?;
 
@@ -180,7 +180,7 @@ impl MCX {
         tracing::info!("wait for stop after reset");
 
         // Give bootloader time to do what it needs to do
-        thread::sleep(Duration::from_millis(100));
+        crate::probe::usb_util::wait(Duration::from_millis(100)).await;
 
         let ap = interface.fully_qualified_address();
         let dp = ap.dp();
@@ -441,7 +441,7 @@ impl ArmDebugSequence for MCX {
 
         let can_read_pins = probe.swj_pins(0, n_reset, 0).await? != 0xFFFF_FFFF;
 
-        thread::sleep(Duration::from_millis(50));
+        crate::probe::usb_util::wait(Duration::from_millis(50)).await;
 
         let mut assert_n_reset = async || probe.swj_pins(n_reset, n_reset, 0).await;
         if can_read_pins {
@@ -451,7 +451,7 @@ impl ArmDebugSequence for MCX {
             while assert_n_reset().await? & n_reset == 0 && !timeout_occured() {}
         } else {
             assert_n_reset().await?;
-            thread::sleep(Duration::from_millis(100));
+            crate::probe::usb_util::wait(Duration::from_millis(100)).await;
         }
 
         let ap = FullyQualifiedApAddress::v1_with_dp(probe.current_debug_port(), 0);

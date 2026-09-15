@@ -177,7 +177,9 @@ impl<'probe> Xdm<'probe> {
             .await?;
 
         // Reset must be high for 10 CPU clocks.
-        std::thread::sleep(Duration::from_millis(1));
+        // Not std::thread::sleep: see usb_util::wait - blocking in wasm stalls
+        // the event loop and prevents the surrounding futures from completing.
+        crate::probe::usb_util::wait(Duration::from_millis(1)).await;
 
         let mut pwr_control = PowerControl(0);
         pwr_control.set_debug_wakeup(true);

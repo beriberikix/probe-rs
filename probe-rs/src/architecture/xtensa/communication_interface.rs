@@ -322,8 +322,10 @@ impl<'probe> XtensaCommunicationInterface<'probe> {
             if start.elapsed() >= timeout {
                 return Err(XtensaError::Timeout);
             }
-            // Wait a bit before polling again.
-            std::thread::sleep(Duration::from_millis(1));
+            // Wait a bit before polling again. Must not be std::thread::sleep:
+            // blocking the browser's event loop would stop futures being polled,
+            // so the USB transfer this loop waits on could never complete.
+            crate::probe::usb_util::wait(Duration::from_millis(1)).await;
         }
 
         Ok(())

@@ -192,7 +192,7 @@ impl XtensaDebugSequence for ESP32 {
             other => other?,
         }
 
-        std::thread::sleep(Duration::from_millis(100));
+        crate::probe::usb_util::wait(Duration::from_millis(100)).await;
 
         core.enter_debug_mode().await?;
 
