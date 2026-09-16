@@ -4,7 +4,7 @@ use postcard_rpc::standard_icd::WireError;
 use postcard_schema::schema::owned::OwnedNamedType;
 use probe_rs_rpc::{ENDPOINT_LIST, TOPICS_IN_LIST, TOPICS_OUT_LIST};
 
-use crate::{ClientError, TransportError, from_host_err};
+use crate::{Capabilities, ClientError, TransportError, from_host_err};
 
 /// Schema the client implements, including postcard-rpc standard endpoints
 /// and topics that the `endpoints!` / `topics!` macros merge in.
@@ -118,6 +118,40 @@ fn log_list_mismatch<T: PartialEq + core::fmt::Debug>(
         "RPC {kind} of the server do not match this client"
     );
     false
+}
+
+/// Subset-tolerant comparison: every endpoint/topic the server shares with
+/// the client must have identical keys (the key hashes the path and the
+/// schema); anything the server lacks is reported, not rejected.
+pub fn negotiate(expected: &SchemaReport, actual: &SchemaReport) -> Result<Capabilities, ClientError> {
+    let mut caps = Capabilities::default();
+    let actual_eps = endpoint_keys(actual);
+    for (path, req, resp) in endpoint_keys(expected) {
+        match actual_eps.iter().find(|(p, _, _)| *p == path) {
+            None => caps.unsupported_endpoints.push(path.to_string()),
+            Some((_, r, s)) if *r == req && *s == resp => {}
+            Some(_) => {
+                tracing::warn!("endpoint {path} has a different schema on the server");
+                return Err(ClientError::IncompatibleServer);
+            }
+        }
+    }
+    for (kind, exp, act) in [
+        ("in", topic_keys(&expected.topics_in), topic_keys(&actual.topics_in)),
+        ("out", topic_keys(&expected.topics_out), topic_keys(&actual.topics_out)),
+    ] {
+        for (path, key) in exp {
+            match act.iter().find(|(p, _)| *p == path) {
+                None => caps.unsupported_topics.push(format!("{kind}:{path}")),
+                Some((_, k)) if *k == key => {}
+                Some(_) => {
+                    tracing::warn!("topic {path} has a different schema on the server");
+                    return Err(ClientError::IncompatibleServer);
+                }
+            }
+        }
+    }
+    Ok(caps)
 }
 
 pub fn from_schema_err(error: SchemaError<WireError>) -> ClientError {

@@ -27,6 +27,7 @@ remote = [
     "dep:tokio-util",
     "tokio/io-util",
     "tokio/process",
+    "tokio/net",
 ]
 
 [dependencies]
@@ -35,7 +36,8 @@ postcard = { version = "1.0", features = ["use-std"] }
 postcard-rpc = { version = "0.12.0", features = ["use-std"] }
 postcard-schema = { version = "0.2.0", features = ["use-std", "derive"] }
 serde = { version = "1", features = ["derive"] }
-tokio = { version = "1.0", features = ["fs", "macros", "net", "sync", "time"] }
+# Only `sync`/`macros` are needed on every platform; fs/net/time are host-only.
+tokio = { version = "1.0", features = ["macros", "sync"] }
 sha2 = "0.11"
 docsplay = { workspace = true }
 thiserror = { workspace = true }
@@ -50,6 +52,13 @@ rustls = { version = "0.23", default-features = false, features = [
 tokio-tungstenite = { version = "0.30", features = [
     "rustls-tls-webpki-roots",
 ], optional = true }
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+tokio = { version = "1.0", features = ["fs", "rt", "time"] }
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+futures-util = "0.3"
+gloo-timers = { version = "0.3", features = ["futures"] }
 
 [lints]
 workspace = true

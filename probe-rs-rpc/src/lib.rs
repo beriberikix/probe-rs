@@ -147,9 +147,19 @@ impl server::WireSpawn for TokioSpawner {
         &()
     }
 }
+#[cfg(not(target_family = "wasm"))]
 impl host_client::WireSpawn for TokioSpawner {
     fn spawn(&mut self, fut: impl Future<Output = ()> + Send + 'static) {
         _ = tokio::spawn(fut);
+    }
+}
+
+/// On wasm there is no tokio runtime; postcard-rpc's wasm `WireSpawn` has no
+/// `Send` bound, so tasks run on the browser's single-threaded executor.
+#[cfg(target_family = "wasm")]
+impl host_client::WireSpawn for TokioSpawner {
+    fn spawn(&mut self, fut: impl Future<Output = ()> + 'static) {
+        wasm_bindgen_futures::spawn_local(fut);
     }
 }
 

@@ -5,10 +5,10 @@ pub mod unix;
 #[cfg(feature = "remote")]
 pub mod websocket;
 
-#[cfg(feature = "remote")]
 pub use framing::*;
 
-#[cfg(feature = "remote")]
+/// Length-prefixed message framing shared by every stream transport
+/// (websocket, unix socket, and browser adapters).
 mod framing {
     use tokio_util::bytes::{BufMut, BytesMut};
 

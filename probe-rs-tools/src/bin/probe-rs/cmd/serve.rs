@@ -270,7 +270,10 @@ async fn ws_handler(ws: WebSocketUpgrade, state: State<Arc<ServerState>>) -> imp
 
     // finalize the upgrade process by returning upgrade callback.
     // we can customize the callback by sending additional info such as address.
-    let mut response = ws.on_upgrade({
+    // Browser clients cannot read response headers on a WebSocket upgrade, so
+    // they request the challenge as the first server frame instead by offering
+    // this subprotocol. Native clients keep reading the header.
+    let mut response = ws.protocols([CHALLENGE_FRAME_PROTOCOL]).on_upgrade({
         let challenge = challenge.clone();
         async move |socket| {
             // Send the request out of here so the task can be spawned on the local set.
@@ -288,9 +291,27 @@ async fn ws_handler(ws: WebSocketUpgrade, state: State<Arc<ServerState>>) -> imp
 
 static SERVER_DEPTH: usize = 16;
 
+/// WebSocket subprotocol a client offers to receive the auth challenge as the
+/// first (length-prefixed) binary frame instead of the `Probe-Rs-Challenge`
+/// response header.
+const CHALLENGE_FRAME_PROTOCOL: &str = "probe-rs.challenge-frame";
+
 /// Actual websocket state machine (one will be spawned per connection on the local set)
 async fn handle_socket(socket: WebSocket, challenge: String, state: Arc<ServerState>) {
-    let (writer, reader) = socket.split();
+    let wants_challenge_frame = socket
+        .protocol()
+        .is_some_and(|p| p.as_bytes() == CHALLENGE_FRAME_PROTOCOL.as_bytes());
+    let (mut writer, reader) = socket.split();
+
+    if wants_challenge_frame
+        && writer
+            .send(ws::Message::Binary(frame(challenge.as_bytes()).freeze()))
+            .await
+            .is_err()
+    {
+        tracing::warn!("Client disconnected before receiving the challenge");
+        return;
+    }
 
     let mut reader = WebsocketRx::new(reader.map(|message| {
         message.map(|message| match message {

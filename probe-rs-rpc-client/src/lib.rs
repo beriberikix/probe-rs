@@ -13,10 +13,32 @@ use postcard_rpc::{
 };
 use postcard_schema::Schema;
 use serde::{Serialize, de::DeserializeOwned};
-use tokio::{
-    sync::{Mutex, Notify},
-    time::timeout,
-};
+use tokio::sync::{Mutex, Notify};
+
+/// `tokio::time::timeout` on native targets; a `gloo-timers` based
+/// equivalent on wasm, where tokio's time driver is unavailable.
+mod timeout {
+    use std::{future::Future, time::Duration};
+
+    #[cfg(not(target_family = "wasm"))]
+    pub use tokio::time::timeout;
+
+    #[cfg(target_family = "wasm")]
+    pub async fn timeout<F: Future>(duration: Duration, fut: F) -> Result<F::Output, Elapsed> {
+        use futures_util::future::{Either, select};
+        let sleep = gloo_timers::future::sleep(duration);
+        futures_util::pin_mut!(fut);
+        match select(fut, sleep).await {
+            Either::Left((out, _)) => Ok(out),
+            Either::Right(_) => Err(Elapsed),
+        }
+    }
+
+    #[cfg(target_family = "wasm")]
+    #[derive(Debug)]
+    pub struct Elapsed;
+}
+use timeout::timeout;
 
 use std::{
     path::{Path, PathBuf},
@@ -143,6 +165,21 @@ pub enum ClientError {
     SshSpawn(#[source] std::io::Error),
     /// Failed to read {0}.
     FileRead(PathBuf, #[source] std::io::Error),
+}
+
+/// What a server implements relative to this client, from [`RpcClient::negotiate`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Capabilities {
+    /// Endpoint paths this client knows but the server does not serve.
+    pub unsupported_endpoints: Vec<String>,
+    /// Topic paths this client knows but the server does not publish/accept.
+    pub unsupported_topics: Vec<String>,
+}
+
+impl Capabilities {
+    pub fn supports_endpoint(&self, path: &str) -> bool {
+        !self.unsupported_endpoints.iter().any(|p| p == path)
+    }
 }
 
 pub(crate) fn from_host_err(e: HostErr<WireError>) -> ClientError {
@@ -407,7 +444,13 @@ impl RpcClient {
                     seq_kind: VarSeqKind::Seq2,
                     err_uri_path: "error",
                     outgoing_depth: 1,
-                    subscriber_timeout_if_full: Duration::from_secs(1),
+                    // postcard-rpc sleeps on this only when a subscription
+                    // channel is full; on wasm there is no timer to sleep on.
+                    subscriber_timeout_if_full: if cfg!(target_family = "wasm") {
+                        Duration::ZERO
+                    } else {
+                        Duration::from_secs(1)
+                    },
                 },
             ),
             upload_cache: Arc::new(Mutex::new(UploadCache::default())),
@@ -435,6 +478,20 @@ impl RpcClient {
         Ok(self)
     }
 
+    /// Like [`Self::ensure_compatible`], but tolerate a server that implements
+    /// only a subset of this client's endpoints and topics (e.g. probe-rs
+    /// compiled for the browser). Endpoints both sides know must agree on
+    /// their request/response keys; the rest are reported as unsupported and
+    /// calling them fails with [`ClientError::UnknownEndpoint`].
+    pub async fn negotiate(&self) -> Result<Capabilities, ClientError> {
+        let expected = schema::expected_schema_report()?;
+        let actual = self
+            .get_schema_report(&expected)
+            .await
+            .map_err(schema::from_schema_err)?;
+        schema::negotiate(&expected, &actual)
+    }
+
     async fn get_schema_report(
         &self,
         expected: &SchemaReport,
@@ -450,24 +507,20 @@ impl RpcClient {
             return Err(SchemaError::Comms(HostErr::Closed));
         };
 
-        let collect_task = tokio::task::spawn({
-            async move {
-                let mut got = vec![];
-                while let Ok(Ok(val)) =
-                    tokio::time::timeout(Duration::from_millis(500), sub.recv()).await
-                {
-                    got.push(val);
-                }
-                got
+        // Collect the schema data topic concurrently with the request that
+        // triggers it. Both run on the current task, so no runtime is needed.
+        let collect_task = async move {
+            let mut got = vec![];
+            while let Ok(Ok(val)) = timeout(Duration::from_millis(500), sub.recv()).await {
+                got.push(val);
             }
-        });
-        let trigger_task = self.client.send_resp::<GetAllSchemasEndpoint>(&()).await;
-        let data = collect_task.await;
-        let (resp, data) = match (trigger_task, data) {
-            (Ok(a), Ok(b)) => (a, b),
-            (Ok(_), Err(_)) => return Err(SchemaError::TaskError),
-            (Err(e), Ok(_)) => return Err(SchemaError::Comms(e)),
-            (Err(e1), Err(_e2)) => return Err(SchemaError::Comms(e1)),
+            got
+        };
+        let trigger_task = self.client.send_resp::<GetAllSchemasEndpoint>(&());
+        let (trigger_task, data) = tokio::join!(trigger_task, collect_task);
+        let resp = match trigger_task {
+            Ok(a) => a,
+            Err(e) => return Err(SchemaError::Comms(e)),
         };
         let mut rpt = SchemaReport::default();
         let mut e_and_t = vec![];
@@ -597,6 +650,7 @@ impl RpcClient {
     /// Failed uploads never update the cache. The file is hashed even for a
     /// local session, where the returned hash is the caller's only way to tell
     /// whether the contents changed since a previous resolve.
+    #[cfg(not(target_family = "wasm"))]
     pub async fn resolve_upload(&self, src_path: &Path) -> Result<ResolvedUpload, ClientError> {
         let src_path = src_path
             .canonicalize()
@@ -651,6 +705,42 @@ impl RpcClient {
         })
     }
 
+    /// Resolve in-memory file contents to a server path plus content identity,
+    /// for hosts without a file system (browsers). `name` only identifies the
+    /// upload in the cache and in logs; it is never read.
+    pub async fn resolve_upload_bytes(
+        &self,
+        name: &Path,
+        data: &[u8],
+    ) -> Result<ResolvedUpload, ClientError> {
+        let name = name.to_path_buf();
+        let content_hash = ContentHash::from_bytes(data);
+
+        if let Some(remote_path) = self.upload_cache.lock().await.lookup(&name, content_hash) {
+            return Ok(ResolvedUpload {
+                canonical_path: name,
+                content_hash,
+                remote_path,
+            });
+        }
+
+        let remote_path = self
+            .upload_bytes(&name, data)
+            .await
+            .map_err(|e| TransportError::Message(format!("Failed to upload file: {e}")))?;
+
+        self.upload_cache
+            .lock()
+            .await
+            .insert(name.clone(), content_hash, remote_path.clone());
+
+        Ok(ResolvedUpload {
+            canonical_path: name,
+            content_hash,
+            remote_path,
+        })
+    }
+
     /// Make a local file available to the RPC server, returning the path the
     /// server should read.
     ///
@@ -658,6 +748,7 @@ impl RpcClient {
     /// rebuilding a binary between calls uploads the new bytes rather than
     /// silently reusing the stale copy. Unlike [`Self::resolve_upload`], a local
     /// session never reads the file, since the server reads it in place.
+    #[cfg(not(target_family = "wasm"))]
     pub async fn upload_file(&self, src_path: &Path) -> Result<PathBuf, ClientError> {
         if self.is_localhost {
             return Ok(src_path
@@ -668,7 +759,10 @@ impl RpcClient {
         Ok(self.resolve_upload(src_path).await?.remote_path)
     }
 
-    async fn upload_bytes(&self, src_path: &Path, data: &[u8]) -> Result<PathBuf, ClientError> {
+    /// Upload `data` to the server's temp-file store and return the path the
+    /// server should read. `src_path` is only used for logging. This is the
+    /// upload primitive for hosts without a file system (browsers).
+    pub async fn upload_bytes(&self, src_path: &Path, data: &[u8]) -> Result<PathBuf, ClientError> {
         tracing::debug!("Uploading {} ({} bytes)", src_path.display(), data.len());
 
         let TempFile { key, path } = self.send_resp::<CreateTempFileEndpoint, _>(&()).await?;
@@ -883,6 +977,7 @@ impl SessionInterface {
             .await
     }
 
+    #[cfg(not(target_family = "wasm"))]
     pub async fn build_flash_loader(
         &self,
         path: PathBuf,
@@ -905,13 +1000,16 @@ impl SessionInterface {
     pub async fn build_flash_loader_resolved(
         &self,
         upload: &ResolvedUpload,
-        mut format: FormatOptions,
+        #[cfg_attr(target_family = "wasm", allow(unused_mut))] mut format: FormatOptions,
         image_target: Option<String>,
         read_flasher_rtt: bool,
         rtt_client: Option<Key<RttClient>>,
     ) -> Result<BuildResult, ClientError> {
         let path = upload.server_path().to_path_buf();
 
+        // On wasm the caller passes server paths obtained from
+        // `resolve_upload_bytes` directly; there are no local files to upload.
+        #[cfg(not(target_family = "wasm"))]
         if let Some(ref mut idf_bootloader) = format.idf_options.idf_bootloader {
             *idf_bootloader = self
                 .client
@@ -921,6 +1019,7 @@ impl SessionInterface {
                 .to_string();
         }
 
+        #[cfg(not(target_family = "wasm"))]
         if let Some(ref mut idf_partition_table) = format.idf_options.idf_partition_table {
             *idf_partition_table = self
                 .client
@@ -1152,13 +1251,23 @@ impl SessionInterface {
     /// DWARF from `path` on each request; does not use session
     /// `ServerDebugState`. DAP stack refresh uses
     /// [`Self::take_rich_stack_trace`] instead.
+    #[cfg(not(target_family = "wasm"))]
     pub async fn stack_trace(
         &self,
         path: PathBuf,
         stack_frame_limit: u32,
     ) -> Result<StackTraces, ClientError> {
         let path = self.client.upload_file(&path).await?;
+        self.stack_trace_at(&path, stack_frame_limit).await
+    }
 
+    /// Stack trace using an ELF the server can already read (a path returned
+    /// by [`RpcClient::upload_bytes`] / [`ResolvedUpload::server_path`]).
+    pub async fn stack_trace_at(
+        &self,
+        path: &Path,
+        stack_frame_limit: u32,
+    ) -> Result<StackTraces, ClientError> {
         self.client
             .send_resp::<TakeStackTraceEndpoint, _>(&TakeStackTraceRequest {
                 sessid: self.sessid,
@@ -1173,6 +1282,7 @@ impl SessionInterface {
     /// source locations before the first halt. Mirrors the local backend,
     /// which loads `DebugInfo` at session start. Repeated calls replace the
     /// server copy and invalidate DWARF-derived server state.
+    #[cfg(not(target_family = "wasm"))]
     pub async fn load_debug_info(&self, path: PathBuf) -> Result<(), ClientError> {
         let upload = self.client.resolve_upload(&path).await?;
         self.load_debug_info_resolved(&upload).await
@@ -1193,8 +1303,19 @@ impl SessionInterface {
 
     /// Resolve a local path to a single upload identity for reuse across a
     /// restart transaction (validate, flash, publish debug info).
+    #[cfg(not(target_family = "wasm"))]
     pub async fn resolve_upload(&self, path: &Path) -> Result<ResolvedUpload, ClientError> {
         self.client.resolve_upload(path).await
+    }
+
+    /// Byte-based counterpart of [`Self::resolve_upload`], for hosts without a
+    /// file system.
+    pub async fn resolve_upload_bytes(
+        &self,
+        name: &Path,
+        data: &[u8],
+    ) -> Result<ResolvedUpload, ClientError> {
+        self.client.resolve_upload_bytes(name, data).await
     }
 
     /// Resolve source file/line requests against the server-owned debug info.
@@ -1226,20 +1347,30 @@ impl SessionInterface {
     /// Replace the server-side per-core SVD state, or clear it when `path` is
     /// `None`. The old cache is cleared before upload/parse so a failed reload
     /// cannot leave stale peripheral metadata visible.
+    #[cfg(not(target_family = "wasm"))]
     pub async fn load_svd(&self, core: u32, path: Option<PathBuf>) -> Result<(), ClientError> {
+        self.clear_svd(core).await?;
+
+        let Some(path) = path else {
+            return Ok(());
+        };
+        let path = self.client.upload_file(&path).await?;
+        self.load_svd_at(core, &path).await
+    }
+
+    /// Clear the server-side per-core SVD state.
+    pub async fn clear_svd(&self, core: u32) -> Result<(), ClientError> {
         self.client
             .send_resp::<LoadSvdEndpoint, _>(&LoadSvdRequest {
                 sessid: self.sessid,
                 core,
                 path: None,
             })
-            .await?;
+            .await
+    }
 
-        let Some(path) = path else {
-            return Ok(());
-        };
-        let path = self.client.upload_file(&path).await?;
-
+    /// Load an SVD the server can already read (see [`Self::stack_trace_at`]).
+    pub async fn load_svd_at(&self, core: u32, path: &Path) -> Result<(), ClientError> {
         self.client
             .send_resp::<LoadSvdEndpoint, _>(&LoadSvdRequest {
                 sessid: self.sessid,
