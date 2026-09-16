@@ -58,17 +58,76 @@ where
     // Nothing we can do; see the doc comment above.
 }
 
+/// Spike D instrumentation: per-transfer cost breakdown on wasm.
+#[cfg(target_family = "wasm")]
+pub mod stats {
+    use std::cell::Cell;
+    thread_local! {
+        pub static WRITES: Cell<u64> = const { Cell::new(0) };
+        pub static READS: Cell<u64> = const { Cell::new(0) };
+        pub static EP_NS: Cell<u64> = const { Cell::new(0) };
+        pub static XFER_NS: Cell<u64> = const { Cell::new(0) };
+        pub static BYTES: Cell<u64> = const { Cell::new(0) };
+    }
+    pub fn add(c: &'static std::thread::LocalKey<Cell<u64>>, v: u64) {
+        c.with(|x| x.set(x.get() + v));
+    }
+    pub fn report() -> String {
+        let (w, r, ep, xf, b) = (
+            WRITES.with(|x| x.get()),
+            READS.with(|x| x.get()),
+            EP_NS.with(|x| x.get()),
+            XFER_NS.with(|x| x.get()),
+            BYTES.with(|x| x.get()),
+        );
+        let n = (w + r).max(1);
+        format!(
+            "usb: {w} writes, {r} reads, {b} bytes; endpoint-create {:.1} ms total ({:.0} us/xfer); submit→complete {:.1} ms total ({:.0} us/xfer)",
+            ep as f64 / 1e6,
+            ep as f64 / 1e3 / n as f64,
+            xf as f64 / 1e6,
+            xf as f64 / 1e3 / n as f64
+        )
+    }
+    pub fn reset() {
+        for c in [&WRITES, &READS, &EP_NS, &XFER_NS, &BYTES] {
+            c.with(|x| x.set(0));
+        }
+    }
+}
+
+#[cfg(target_family = "wasm")]
+macro_rules! timed {
+    ($counter:expr, $e:expr) => {{
+        let t = web_time::Instant::now();
+        let r = $e;
+        stats::add(&$counter, t.elapsed().as_nanos() as u64);
+        r
+    }};
+}
+#[cfg(not(target_family = "wasm"))]
+macro_rules! timed {
+    ($counter:expr, $e:expr) => {
+        $e
+    };
+}
+
 impl InterfaceExt for Interface {
     async fn write_bulk(&self, endpoint: u8, buf: &[u8], timeout: Duration) -> io::Result<usize> {
-        let mut ep_out = self
+        #[cfg(target_family = "wasm")]
+        {
+            stats::add(&stats::WRITES, 1);
+            stats::add(&stats::BYTES, buf.len() as u64);
+        }
+        let mut ep_out = timed!(stats::EP_NS, self
             .endpoint::<Bulk, Out>(endpoint)
-            .map_err(io::Error::from)?;
+            .map_err(io::Error::from))?;
 
         let mut transfer = ep_out.allocate(buf.len());
         transfer.extend_from_slice(buf);
         ep_out.submit(transfer);
 
-        let Some(comp) = with_timeout(ep_out.next_complete(), timeout).await else {
+        let Some(comp) = timed!(stats::XFER_NS, with_timeout(ep_out.next_complete(), timeout).await) else {
             cancel_and_drain(&mut ep_out).await;
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,
@@ -86,9 +145,11 @@ impl InterfaceExt for Interface {
         buf: &mut [u8],
         timeout: Duration,
     ) -> io::Result<usize> {
-        let mut ep_in = self
+        #[cfg(target_family = "wasm")]
+        stats::add(&stats::READS, 1);
+        let mut ep_in = timed!(stats::EP_NS, self
             .endpoint::<Bulk, In>(endpoint)
-            .map_err(io::Error::from)?;
+            .map_err(io::Error::from))?;
 
         // nusb >= 0.2 rejects an IN transfer whose requested length is zero or
         // not a multiple of the endpoint's max packet size, with
@@ -99,7 +160,7 @@ impl InterfaceExt for Interface {
 
         ep_in.submit(ep_in.allocate(requested_len));
 
-        let Some(comp) = with_timeout(ep_in.next_complete(), timeout).await else {
+        let Some(comp) = timed!(stats::XFER_NS, with_timeout(ep_in.next_complete(), timeout).await) else {
             cancel_and_drain(&mut ep_in).await;
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,
@@ -123,6 +184,8 @@ impl InterfaceExt for Interface {
         }
 
         buf[..actual_len].copy_from_slice(&data[..actual_len]);
+        #[cfg(target_family = "wasm")]
+        stats::add(&stats::BYTES, actual_len as u64);
         Ok(actual_len)
     }
 }

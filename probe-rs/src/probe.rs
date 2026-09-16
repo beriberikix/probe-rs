@@ -1,6 +1,6 @@
 //! Probe drivers
 pub(crate) mod common;
-pub(crate) mod usb_util;
+pub mod usb_util;
 
 pub mod blackmagic;
 pub mod cmsisdap;
