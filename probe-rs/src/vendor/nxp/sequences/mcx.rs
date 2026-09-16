@@ -7,7 +7,7 @@ use std::{sync::Arc, time::Duration};
 use web_time::Instant;
 
 use bitfield::BitMut;
-use debugmailbox::{DMCSW, DMREQUEST};
+use debugmailbox::{DMCSW, DMREQUEST, DMRETURN};
 use probe_rs_target::CoreType;
 
 use crate::{
@@ -62,6 +62,17 @@ mod debugmailbox {
             Request: value
         }),
         to: value => value.Request
+    );
+    define_ap_register!(
+        name: DMRETURN,
+        address: 0x08,
+        fields: [
+            Return: u32
+        ],
+        from: value => Ok(DMRETURN {
+            Return: value
+        }),
+        to: value => value.Return
     );
 }
 
@@ -153,19 +164,39 @@ impl MCX {
         tracing::info!("DPIDR: {:?}", dpidr);
 
         tracing::info!("active DebugMailbox");
+        // Resynchronise the mailbox, then wait for the ROM to clear the request.
         interface
             .write_raw_ap_register(&ap, DMCSW::ADDRESS, 0x0000_0021)
             .await?;
-        crate::probe::usb_util::wait(Duration::from_millis(30)).await;
-        interface.read_raw_ap_register(&ap, 0x0).await?;
-        interface.flush().await?;
+        let start = Instant::now();
+        loop {
+            let csw_val = interface.read_raw_ap_register(&ap, DMCSW::ADDRESS).await?;
+            if (csw_val & 0xFFFF) == 0 {
+                break;
+            }
+            if start.elapsed() > Duration::from_millis(1000) {
+                return Err(ArmError::Timeout);
+            }
+            crate::probe::usb_util::wait(Duration::from_millis(10)).await;
+        }
 
+        // Start a debug session and wait for the ROM's acknowledgement; only
+        // then is the core parked where the debugger can take over.
         tracing::info!("DebugMailbox command: start debug session");
         interface
             .write_raw_ap_register(&ap, DMREQUEST::ADDRESS, 0x0000_0007)
             .await?;
-        crate::probe::usb_util::wait(Duration::from_millis(30)).await;
-        interface.read_raw_ap_register(&ap, 0x0).await?;
+        let start = Instant::now();
+        loop {
+            let return_val = interface.read_raw_ap_register(&ap, DMRETURN::ADDRESS).await? & 0xFFFF;
+            if return_val == 0 {
+                break;
+            }
+            if start.elapsed() > Duration::from_millis(1000) {
+                return Err(ArmError::Timeout);
+            }
+            crate::probe::usb_util::wait(Duration::from_millis(10)).await;
+        }
         interface.flush().await?;
 
         Ok(true)
@@ -184,12 +215,21 @@ impl MCX {
 
         let ap = interface.fully_qualified_address();
         let dp = ap.dp();
+
+        // Matches upstream master: only go through the debug mailbox when the
+        // AP did not come back on its own, then wait (bounded) for it. The
+        // previous version spun while the AP *was* enabled and then always ran
+        // the mailbox handshake, which hangs on a board whose AP is already up.
+        if !self.is_ap_enabled(interface.get_dap_access()?, &ap).await? {
+            self.enable_debug_mailbox(interface.get_dap_access()?, dp)
+                .await?;
+        }
         let start = Instant::now();
-        while self.is_ap_enabled(interface.get_dap_access()?, &ap).await?
+        while !self.is_ap_enabled(interface.get_dap_access()?, &ap).await?
             && start.elapsed() < Duration::from_millis(300)
-        {}
-        self.enable_debug_mailbox(interface.get_dap_access()?, dp)
-            .await?;
+        {
+            crate::probe::usb_util::wait(Duration::from_millis(10)).await;
+        }
 
         // Halt the core in case it didn't stop at a breakpoint
         let mut dhcsr = Dhcsr(0);
@@ -367,6 +407,11 @@ impl ArmDebugSequence for MCX {
         let _ = interface
             .write_word_32(Aircr::get_mmio_address(), aircr.into())
             .await;
+        // Push the queued AIRCR write to the probe now: probe drivers batch
+        // memory writes, and nothing below is guaranteed to flush it before
+        // the core is halted again. The flush may report an error because the
+        // target resets mid-transaction; that is expected.
+        let _ = interface.flush().await;
 
         let _ = self.wait_for_stop_after_reset(interface).await;
 
