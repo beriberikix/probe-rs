@@ -37,7 +37,8 @@ pub async fn list_tests(
     sender
         .reply::<ListTestsEndpoint>(header.seq_no, &resp)
         .await
-        .unwrap();
+        // The client may already be gone (browser tab closed); nothing to report to.
+        .unwrap_or_else(|_| tracing::warn!("client disconnected before the ListTestsEndpoint reply"));
 }
 
 fn list_tests_impl(
@@ -119,7 +120,8 @@ pub async fn run_test(
     sender
         .reply::<RunTestEndpoint>(header.seq_no, &resp)
         .await
-        .unwrap();
+        // The client may already be gone (browser tab closed); nothing to report to.
+        .unwrap_or_else(|_| tracing::warn!("client disconnected before the RunTestEndpoint reply"));
 }
 
 fn run_test_impl(

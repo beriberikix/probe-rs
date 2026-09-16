@@ -49,7 +49,8 @@ pub async fn monitor(
     sender
         .reply::<MonitorEndpoint>(header.seq_no, &resp)
         .await
-        .unwrap();
+        // The client may already be gone (browser tab closed); nothing to report to.
+        .unwrap_or_else(|_| tracing::warn!("client disconnected before the MonitorEndpoint reply"));
 }
 
 pub(crate) struct MonitorSender {

@@ -130,10 +130,13 @@ where
 
                 _ = self.token.cancelled() => break,
                 Some(event) = self.rx.recv() => {
-                    sender
-                        .publish::<T>(VarSeq::Seq2(0), &event)
-                        .await
-                        .unwrap();
+                    // The client may have gone away mid-stream (e.g. a browser
+                    // tab navigating during `monitor`). Stop publishing rather
+                    // than panic, so the handler can finish and release the probe.
+                    if sender.publish::<T>(VarSeq::Seq2(0), &event).await.is_err() {
+                        tracing::warn!("client disconnected while publishing {}", T::PATH);
+                        break;
+                    }
                 }
             }
         }
