@@ -1671,6 +1671,7 @@ impl UnitInfo {
                     debug_info,
                     node_die,
                     &parent_variable.memory_location,
+                    child_variable.byte_size,
                     memory,
                     frame_info,
                 )
@@ -1739,6 +1740,7 @@ impl UnitInfo {
         debug_info: &DebugInfo,
         node_die: &gimli::DebuggingInformationEntry<'_, '_, GimliReader>,
         parent_location: &VariableLocation,
+        byte_size: Option<u64>,
         memory: &mut dyn MemoryInterface,
         frame_info: StackFrameInfo<'_>,
     ) -> Result<ExpressionResult, DebugError> {
@@ -1772,19 +1774,9 @@ impl UnitInfo {
                         .convert_incomplete()?,
 
                     gimli::AttributeValue::Udata(offset_from_location) => {
-                        let location = if let VariableLocation::Address(address) = parent_location {
-                            let Some(location) = address.checked_add(offset_from_location) else {
-                                return Err(DebugError::WarnAndContinue {
-                                    message: "Overflow calculating variable address".to_string(),
-                                });
-                            };
-
-                            VariableLocation::Address(location)
-                        } else {
-                            parent_location.clone()
-                        };
-
-                        ExpressionResult::Location(location)
+                        ExpressionResult::Location(
+                            parent_location.offset_by(offset_from_location, byte_size),
+                        )
                     }
 
                     gimli::AttributeValue::LocationListsRef(location_list_offset) => self
@@ -1930,18 +1922,22 @@ impl UnitInfo {
             .expression_to_piece(memory, expression, frame_info)
             .await?;
 
-        if pieces.is_empty() {
-            return Ok(ExpressionResult::Location(VariableLocation::Error(
-                "Error: expr_to_piece() returned 0 results".to_string(),
-            )));
-        }
-        if pieces.len() > 1 {
-            return Ok(ExpressionResult::Location(VariableLocation::Error(
-                "<unsupported memory implementation>".to_string(),
-            )));
-        }
+        let [piece] = &pieces[..] else {
+            if pieces.is_empty() {
+                return Ok(ExpressionResult::Location(VariableLocation::Error(
+                    "Error: expr_to_piece() returned 0 results".to_string(),
+                )));
+            }
 
-        let result = match &pieces[0].location {
+            return self.assemble_pieces(&pieces, frame_info);
+        };
+
+        // A piece that does not start at a byte boundary, or that holds a part of a byte, needs
+        // the bits of the pieces to be assembled.
+        let bit_offset = piece.bit_offset.unwrap_or(0);
+        let aligned = bit_offset % 8 == 0 && piece.size_in_bits.is_none_or(|bits| bits % 8 == 0);
+
+        let result = match &piece.location {
             Location::Empty => {
                 // This means the value was optimized away.
                 ExpressionResult::Location(VariableLocation::Unavailable)
@@ -1950,7 +1946,9 @@ impl UnitInfo {
                 let error = "The value of this variable may have been optimized out of the debug info, by the compiler.".to_string();
                 ExpressionResult::Location(VariableLocation::Error(error))
             }
-            Location::Address { address } => evaluate_address(*address, memory).await,
+            Location::Address { address } if aligned => {
+                evaluate_address(address + bit_offset / 8, memory).await
+            }
             Location::Value { value } => {
                 let value = match value {
                     gimli::Value::Generic(value) => value.to_string(),
@@ -1968,7 +1966,7 @@ impl UnitInfo {
 
                 ExpressionResult::Value(VariableValue::Valid(value))
             }
-            Location::Register { register } => {
+            Location::Register { register } if aligned && bit_offset == 0 => {
                 if let Some(value) = frame_info
                     .registers
                     .get_register_by_dwarf_id(register.0)
@@ -1981,13 +1979,55 @@ impl UnitInfo {
                     )))
                 }
             }
-            l => ExpressionResult::Location(VariableLocation::Error(format!(
-                "Unimplemented: extract_location() found a location type: {:.100}",
-                format!("{l:?}")
-            ))),
+            _partial_piece => return self.assemble_pieces(&pieces, frame_info),
         };
 
         Ok(result)
+    }
+
+    /// Describe a value that is assembled from more than one place, or from a part of a place.
+    fn assemble_pieces(
+        &self,
+        pieces: &[gimli::Piece<GimliReader, usize>],
+        frame_info: StackFrameInfo<'_>,
+    ) -> Result<ExpressionResult, DebugError> {
+        let mut location_pieces = Vec::with_capacity(pieces.len());
+
+        for piece in pieces {
+            let source = match &piece.location {
+                Location::Empty => PieceSource::Empty,
+                Location::Address { address } => PieceSource::Address(*address),
+                Location::Register { register } => {
+                    let Some(value) = frame_info
+                        .registers
+                        .get_register_by_dwarf_id(register.0)
+                        .and_then(|register| register.value)
+                    else {
+                        return Ok(ExpressionResult::Location(VariableLocation::Error(format!(
+                            "Error: Cannot resolve register: {register:?}"
+                        ))));
+                    };
+
+                    PieceSource::Register(value)
+                }
+                Location::Value { value } => PieceSource::Implicit(value_bytes(*value)),
+                Location::Bytes { value } => PieceSource::Implicit(gimli::Reader::to_slice(value)?.to_vec()),
+                location @ Location::ImplicitPointer { .. } => {
+                    return Ok(ExpressionResult::Location(VariableLocation::Unsupported(format!(
+                        "Unimplemented: extract_location() found a location type: {:.100}",
+                        format!("{location:?}")
+                    ))));
+                }
+            };
+
+            location_pieces.push(LocationPiece {
+                source,
+                bit_offset: piece.bit_offset.unwrap_or(0),
+                bit_size: piece.size_in_bits,
+            });
+        }
+
+        Ok(ExpressionResult::Location(VariableLocation::Composite(location_pieces)))
     }
 
     /// Tries to get the result of a DWARF expression in the form of a Piece.
@@ -2043,16 +2083,14 @@ impl UnitInfo {
     ) {
         let location = if let VariableName::Indexed(child_member_index) = child_variable.name {
             // Push the array member to the proper location according to its index.
-            if let VariableLocation::Address(address) = parent_variable.memory_location {
+            if matches!(
+                parent_variable.memory_location,
+                VariableLocation::Address(_) | VariableLocation::Composite(_)
+            ) {
                 if let Some(byte_size) = child_variable.byte_size {
-                    let Some(location) = address.checked_add(child_member_index * byte_size) else {
-                        child_variable.set_value(VariableValue::Error(
-                            "Overflow calculating variable address".to_string(),
-                        ));
-                        return;
-                    };
-
-                    VariableLocation::Address(location)
+                    parent_variable
+                        .memory_location
+                        .offset_by(child_member_index * byte_size, Some(byte_size))
                 } else {
                     // If this array member doesn't have a byte_size, it may be because it is the first member of an array itself.
                     // In this case, the byte_size will be calculated when the nested array members are resolved.
@@ -2066,20 +2104,41 @@ impl UnitInfo {
             // Non-array members can inherit their memory location from their parent, but only if the parent has a valid memory location.
             if self.is_pointer(child_variable, parent_variable, unit_ref) {
                 match &parent_variable.memory_location {
-                    address @ (VariableLocation::Address(_)
-                    | VariableLocation::RegisterValue(_)) => {
-                        // Now, retrieve the location by reading the adddress pointed to by the parent variable.
-                        match memory.read_word_32(address.memory_address().unwrap()).await {
-                            Ok(memory_location) => {
-                                VariableLocation::Address(memory_location as u64)
+                    location @ (VariableLocation::Address(_)
+                    | VariableLocation::RegisterValue(_)
+                    | VariableLocation::Composite(_)) => {
+                        // Now, retrieve the location by reading the address that the parent
+                        // variable holds. A register holds the address of the value, because the
+                        // debugger uses a register location for the frame base as well.
+                        let location = match location {
+                            VariableLocation::RegisterValue(value) => {
+                                match TryInto::<u64>::try_into(*value) {
+                                    Ok(address) => VariableLocation::Address(address),
+                                    Err(_) => VariableLocation::Error(
+                                        "Register value is not a valid address".to_string(),
+                                    ),
+                                }
                             }
+                            location => location.clone(),
+                        };
+
+                        let mut buffer = [0u8; 8];
+                        let address_size = (self.unit.encoding().address_size as usize).min(8);
+
+                        match location.read(&mut buffer[..address_size], memory).await {
+                            Ok(()) => VariableLocation::Address(u64::from_le_bytes(buffer)),
                             Err(error) => {
+                                // The Display of the error hides the cause, which holds the
+                                // detail of the failure.
+                                let cause = std::error::Error::source(&error)
+                                    .map_or_else(|| error.to_string(), |cause| cause.to_string());
+
                                 tracing::debug!(
-                                    "Failed to read referenced variable address from memory location {} : {error}.",
+                                    "Failed to read referenced variable address from memory location {} : {cause}.",
                                     parent_variable.memory_location
                                 );
                                 VariableLocation::Error(format!(
-                                    "Failed to read referenced variable address from memory location {} : {error}.",
+                                    "Failed to read referenced variable address from memory location {} : {cause}.",
                                     parent_variable.memory_location
                                 ))
                             }
@@ -2491,5 +2550,22 @@ impl RangeExt for &mut gimli::RngListIter<GimliReader> {
 impl RangeExt for gimli::Range {
     fn contains(self, addr: u64) -> bool {
         self.begin <= addr && addr < self.end
+    }
+}
+
+/// The bytes of a value that the debug info holds, in little endian order.
+fn value_bytes(value: gimli::Value) -> Vec<u8> {
+    match value {
+        gimli::Value::Generic(value) => value.to_le_bytes().to_vec(),
+        gimli::Value::I8(value) => value.to_le_bytes().to_vec(),
+        gimli::Value::U8(value) => value.to_le_bytes().to_vec(),
+        gimli::Value::I16(value) => value.to_le_bytes().to_vec(),
+        gimli::Value::U16(value) => value.to_le_bytes().to_vec(),
+        gimli::Value::I32(value) => value.to_le_bytes().to_vec(),
+        gimli::Value::U32(value) => value.to_le_bytes().to_vec(),
+        gimli::Value::I64(value) => value.to_le_bytes().to_vec(),
+        gimli::Value::U64(value) => value.to_le_bytes().to_vec(),
+        gimli::Value::F32(value) => value.to_le_bytes().to_vec(),
+        gimli::Value::F64(value) => value.to_le_bytes().to_vec(),
     }
 }

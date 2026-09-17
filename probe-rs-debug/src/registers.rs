@@ -83,6 +83,13 @@ pub struct DebugRegisters(pub Vec<DebugRegister>);
 impl DebugRegisters {
     /// Read all registers defined in [`crate::core::CoreRegisters`] from the given core.
     pub async fn from_core(core: &mut impl CoreInterface) -> Self {
+        // On a windowed register file (Xtensa) the registers of the calling frames live in the
+        // register file until they are spilled to the stack; without this the unwinder reads stale
+        // values and repeats the caller frame.
+        if let Err(error) = core.spill_registers().await {
+            tracing::warn!("Failed to spill registers: {error}");
+        }
+
         let mut debug_registers = Vec::<DebugRegister>::new();
 
         for (dwarf_id, core_register) in core.registers().core_registers().enumerate() {

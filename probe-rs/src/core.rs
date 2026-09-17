@@ -170,6 +170,15 @@ pub trait CoreInterface: MemoryInterface {
         Ok(())
     }
 
+    /// Spill registers into memory.
+    ///
+    /// For most architectures this is not necessary. Use cases include processors with a windowed
+    /// register file (Xtensa), where only part of the file is visible at once and unwinding needs
+    /// the rest of it in the stack's spill area.
+    async fn spill_registers(&mut self) -> Result<(), Error> {
+        Ok(())
+    }
+
     /// Enables vector catching for the given `condition`
     async fn enable_vector_catch(&mut self, _condition: VectorCatchCondition) -> Result<(), Error> {
         Err(Error::NotImplemented("vector catch"))
@@ -561,6 +570,12 @@ impl<'probe> Core<'probe> {
         self.inner.debug_core_stop().await
     }
 
+    /// Spill registers into memory (a no-op unless the architecture needs it; see
+    /// [`CoreInterface::spill_registers`]).
+    pub async fn spill_registers(&mut self) -> Result<(), Error> {
+        self.inner.spill_registers().await
+    }
+
     /// Enables vector catching for the given `condition`
     pub async fn enable_vector_catch(
         &mut self,
@@ -707,6 +722,10 @@ impl CoreInterface for Core<'_> {
 
     async fn debug_core_stop(&mut self) -> Result<(), Error> {
         self.debug_core_stop().await
+    }
+
+    async fn spill_registers(&mut self) -> Result<(), Error> {
+        self.spill_registers().await
     }
 
     fn is_64_bit(&self) -> bool {

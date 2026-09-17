@@ -547,8 +547,29 @@ impl DebugInfo {
         exception_handler: &dyn ExceptionInterface,
         instruction_set: Option<InstructionSet>,
     ) -> Result<Vec<StackFrame>, probe_rs::Error> {
-        self.unwind_impl(initial_registers, core, exception_handler, instruction_set)
+        self.unwind_with_limit(core, initial_registers, exception_handler, instruction_set, usize::MAX)
             .await
+    }
+
+    /// Like [`Self::unwind`], but stops after `max_stack_frame_count` frames. An unwinder that
+    /// cannot find the end of the stack (e.g. a corrupted stack or a loop in the unwound return
+    /// addresses) otherwise never returns.
+    pub async fn unwind_with_limit(
+        &self,
+        core: &mut impl MemoryInterface,
+        initial_registers: DebugRegisters,
+        exception_handler: &dyn ExceptionInterface,
+        instruction_set: Option<InstructionSet>,
+        max_stack_frame_count: usize,
+    ) -> Result<Vec<StackFrame>, probe_rs::Error> {
+        self.unwind_impl_limited(
+            initial_registers,
+            core,
+            exception_handler,
+            instruction_set,
+            max_stack_frame_count,
+        )
+        .await
     }
 
     pub(crate) async fn unwind_impl(
@@ -557,6 +578,18 @@ impl DebugInfo {
         memory: &mut impl MemoryInterface,
         exception_handler: &dyn ExceptionInterface,
         instruction_set: Option<InstructionSet>,
+    ) -> Result<Vec<StackFrame>, probe_rs::Error> {
+        self.unwind_impl_limited(initial_registers, memory, exception_handler, instruction_set, usize::MAX)
+            .await
+    }
+
+    async fn unwind_impl_limited(
+        &self,
+        initial_registers: DebugRegisters,
+        memory: &mut impl MemoryInterface,
+        exception_handler: &dyn ExceptionInterface,
+        instruction_set: Option<InstructionSet>,
+        max_stack_frame_count: usize,
     ) -> Result<Vec<StackFrame>, probe_rs::Error> {
         let mut stack_frames = Vec::<StackFrame>::new();
 
@@ -574,6 +607,10 @@ impl DebugInfo {
                 }
             })
         {
+            if stack_frames.len() >= max_stack_frame_count {
+                tracing::warn!("Stopped unwinding the stack after {max_stack_frame_count} frames");
+                break;
+            }
             let frame_pc = frame_pc_register_value.try_into().map_err(|error| {
                 let message = format!("Cannot convert register value for program counter to a 64-bit integer value: {error:?}");
                 probe_rs::Error::Register(message)
@@ -772,7 +809,15 @@ impl DebugInfo {
                 };
             }
 
-            let unwound_return_address = unwind_registers
+            // With the Xtensa windowed ABI, the callee's a0 already holds the return address into
+            // the caller; the unwound a0 (from the window spill area) is the caller's own return
+            // address. Using it here would skip the caller frame.
+            let return_address_registers = if instruction_set == Some(InstructionSet::Xtensa) {
+                &callee_frame_registers
+            } else {
+                &unwind_registers
+            };
+            let unwound_return_address = return_address_registers
                 .get_register_by_role(&RegisterRole::ReturnAddress)
                 .ok()
                 .and_then(|reg| reg.value);
@@ -1012,8 +1057,51 @@ impl DebugInfo {
 }
 
 /// Uses the [`TypedPathBuf::normalize`] function to normalize both paths before comparing them
-pub(crate) fn canonical_path_eq(primary_path: TypedPath, secondary_path: TypedPath) -> bool {
-    primary_path.normalize() == secondary_path.normalize()
+/// Whether `partial_path` names `full_path`: the same path, or a relative path that ends it on a
+/// path component boundary (e.g. `src/main.rs` for `/home/me/fw/src/main.rs`). Windows paths
+/// compare without case. (Ported from probe-rs master.)
+pub(crate) fn path_matches(full_path: TypedPath, partial_path: TypedPath) -> bool {
+    let ignore_case = full_path.is_windows() || partial_path.is_windows();
+    let normalize_path = |path: TypedPath| {
+        let string = path.normalize().to_string_lossy().replace('\\', "/");
+
+        if ignore_case {
+            string.to_lowercase()
+        } else {
+            string
+        }
+    };
+
+    let full_str = normalize_path(full_path);
+    let partial_str = normalize_path(partial_path);
+
+    match full_str.strip_suffix(&partial_str) {
+        Some("") => true,
+        Some(prefix) => partial_path.is_relative() && prefix.ends_with('/'),
+        None => false,
+    }
+}
+
+#[cfg(test)]
+mod path_matches_test {
+    use super::{TypedPath, path_matches};
+
+    #[test]
+    fn relative_suffixes_match_on_component_boundaries() {
+        let full = TypedPath::unix("/home/user/fw/src/main.rs");
+        assert!(path_matches(full, TypedPath::unix("/home/user/fw/src/main.rs")));
+        assert!(path_matches(full, TypedPath::unix("src/main.rs")));
+        assert!(path_matches(full, TypedPath::unix("main.rs")));
+        assert!(!path_matches(full, TypedPath::unix("in.rs")));
+        assert!(!path_matches(full, TypedPath::unix("/fw/src/main.rs")));
+        assert!(!path_matches(full, TypedPath::unix("src/lib.rs")));
+    }
+
+    #[test]
+    fn windows_paths_ignore_case() {
+        let full = TypedPath::windows(r"C:\Users\me\src\main.rs");
+        assert!(path_matches(full, TypedPath::windows(r"src\Main.rs")));
+    }
 }
 
 /// Get a handle to the [`gimli::UnwindTableRow`] for this call frame, so that we can reference it to unwind register values.

@@ -1,5 +1,5 @@
 use super::{
-    ColumnType, DebugError, DebugInfo, GimliReader, canonical_path_eq,
+    ColumnType, DebugError, DebugInfo, GimliReader, path_matches,
     unit_info::{self, UnitInfo},
 };
 use gimli::LineSequence;
@@ -104,7 +104,7 @@ impl VerifiedBreakpoint {
                     debug_info
                         .get_path(&program_unit.unit, file_index)
                         .and_then(|combined_path: TypedPathBuf| {
-                            if canonical_path_eq(path, combined_path.to_path()) {
+                            if path_matches(combined_path.to_path(), path) {
                                 tracing::debug!(
                                     "Found matching file index: {file_index} for path: {path}",
                                     file_index = file_index,

@@ -466,6 +466,12 @@ impl MemoryInterface for Xtensa<'_> {
 
 #[async_trait::async_trait(?Send)]
 impl CoreInterface for Xtensa<'_> {
+    async fn spill_registers(&mut self) -> Result<(), Error> {
+        // The inherent method; unwinding needs the windowed register file in the stack's
+        // spill area, not just the window that happens to be current.
+        self.spill_registers().await
+    }
+
     async fn wait_for_core_halted(&mut self, timeout: Duration) -> Result<(), Error> {
         self.interface.wait_for_core_halted(timeout).await?;
         self.on_halted().await?;

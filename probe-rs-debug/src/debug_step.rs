@@ -1,6 +1,6 @@
 use super::{DebugError, VerifiedBreakpoint, debug_info::DebugInfo};
 use probe_rs::{
-    CoreInterface, CoreStatus, HaltReason,
+    CoreInterface, CoreStatus, HaltReason, InstructionSet,
     architecture::{
         arm::ArmError, riscv::communication_interface::RiscvError,
         xtensa::communication_interface::XtensaError,
@@ -54,10 +54,7 @@ impl SteppingMode {
             }
         };
         let origin_program_counter = program_counter;
-        let mut return_address = core
-            .read_core_reg(core.return_address().id())
-            .await?
-            .try_into()?;
+        let mut return_address = read_return_address(core, program_counter).await?;
 
         // Sometimes the target program_counter is at a location where the debug_info program row data does not contain valid statements for halt points.
         // When DebugError::NoValidHaltLocation happens, we will step to the next instruction and try again(until we can reasonably expect to have passed out of an epilogue), before giving up.
@@ -100,10 +97,7 @@ impl SteppingMode {
                                 "Incomplete stepping information @{program_counter:#010X}: {message}"
                             );
                             program_counter = core.step().await?.pc;
-                            return_address = core
-                                .read_core_reg(core.return_address().id())
-                                .await?
-                                .try_into()?;
+                            return_address = read_return_address(core, program_counter).await?;
                             continue;
                         }
                         other_error => {
@@ -332,6 +326,26 @@ impl SteppingMode {
                 message: "Could not determine valid halt locations for this request. Please consider using instruction level stepping.".to_string()
         })
     }
+}
+
+/// Read the return address register as a code address in the caller.
+///
+/// With the Xtensa windowed ABI the top two bits of a0 carry the window size of the call
+/// (`callx8` sets them to `0b10`), so they are replaced by the top bits of the current PC.
+async fn read_return_address(
+    core: &mut impl CoreInterface,
+    program_counter: u64,
+) -> Result<u64, DebugError> {
+    let return_address: u64 = core
+        .read_core_reg(core.return_address().id())
+        .await?
+        .try_into()?;
+    Ok(match core.instruction_set().await {
+        Ok(InstructionSet::Xtensa) => {
+            (return_address & 0x3FFF_FFFF) | (program_counter & 0xC000_0000)
+        }
+        _ => return_address,
+    })
 }
 
 /// Run the target to the desired address. If available, we will use a breakpoint, otherwise we will use single step.

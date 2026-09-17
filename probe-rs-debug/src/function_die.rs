@@ -232,6 +232,7 @@ impl<'a> FunctionDie<'a> {
                 debug_info,
                 &self.function_die,
                 &VariableLocation::Unknown,
+                None,
                 memory,
                 frame_info,
             )
