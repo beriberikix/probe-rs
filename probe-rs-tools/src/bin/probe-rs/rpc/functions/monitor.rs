@@ -112,9 +112,15 @@ fn monitor_impl(
 ) -> anyhow::Result<MonitorExitReason> {
     let shared_session = ctx.shared_session(request.sessid);
 
+    // If the client goes away mid-monitor the publisher side is dropped; stop the
+    // run loop instead of panicking (which would leak the session and the probe).
+    let disconnect_token = ctx.cancellation_token();
     let mut semihosting_sink =
         MonitorEventHandler::new(request.options.semihosting_options, |event| {
-            sender.send_semihosting_event(event).unwrap()
+            if sender.send_semihosting_event(event).is_err() {
+                tracing::warn!("client disconnected while sending a semihosting event");
+                disconnect_token.cancel();
+            }
         });
 
     let client_key = request.options.rtt_client;
