@@ -107,6 +107,8 @@ impl std::fmt::Display for RpcError {
     }
 }
 
+impl std::error::Error for RpcError {}
+
 impl From<&str> for RpcError {
     fn from(e: &str) -> Self {
         Self(e.to_string())

@@ -12,7 +12,7 @@ pub async fn halt_cores(
     _header: VarHeader,
     request: HaltCoresRequest,
 ) -> CoresStatusResponse {
-    let mut session = ctx.session(request.sessid).await;
+    let mut session = ctx.session(request.sessid).await?;
     let core_indices = resolve_core_indices(&session, request.cores.as_deref())?;
     let mut statuses = Vec::with_capacity(core_indices.len());
 
@@ -32,7 +32,7 @@ pub async fn resume_cores(
     _header: VarHeader,
     request: CoresRequest,
 ) -> CoresStatusResponse {
-    let mut session = ctx.session(request.sessid).await;
+    let mut session = ctx.session(request.sessid).await?;
     let core_indices = resolve_core_indices(&session, request.cores.as_deref())?;
     let mut statuses = Vec::with_capacity(core_indices.len());
 
@@ -52,7 +52,7 @@ pub async fn cores_status(
     _header: VarHeader,
     request: CoresRequest,
 ) -> CoresStatusResponse {
-    let mut session = ctx.session(request.sessid).await;
+    let mut session = ctx.session(request.sessid).await?;
     let core_indices = resolve_core_indices(&session, request.cores.as_deref())?;
     let mut statuses = Vec::with_capacity(core_indices.len());
 

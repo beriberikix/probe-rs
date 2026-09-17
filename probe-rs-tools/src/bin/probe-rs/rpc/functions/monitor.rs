@@ -125,7 +125,8 @@ fn monitor_impl(
 
     let client_key = request.options.rtt_client;
     let core_id = client_key
-        .map(|rtt_client| ctx.object_mut_blocking(rtt_client).core_id())
+        .map(|rtt_client| ctx.object_mut_blocking(rtt_client).map(|c| c.core_id()))
+        .transpose()?
         .unwrap_or(0);
 
     let mut run_loop = RunLoop {
@@ -134,12 +135,15 @@ fn monitor_impl(
     };
 
     {
-        let mut session = shared_session.session_blocking();
+        let mut session = shared_session.session_blocking()?;
         prepare_monitor_mode(&request.mode, &mut session, run_loop.core_id)?;
     }
 
-    let poller = client_key.map(|client| RttPoller {
-        rtt_client: shared_session.object_storage().cell(client),
+    let rtt_slot = client_key
+        .map(|client| shared_session.object_storage().cell(client))
+        .transpose()?;
+    let poller = rtt_slot.map(|rtt_client| RttPoller {
+        rtt_client,
         clear_control_block: request.mode.should_clear_rtt_header(),
         sender: |message| {
             sender

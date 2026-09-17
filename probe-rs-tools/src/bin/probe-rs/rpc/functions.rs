@@ -154,7 +154,7 @@ impl RpcSpawnContext {
     fn session_blocking(
         &self,
         sessid: Key<Session>,
-    ) -> impl DerefMut<Target = probe_rs::Session> + use<> {
+    ) -> Result<impl DerefMut<Target = probe_rs::Session> + use<>, RpcError> {
         self.shared_session(sessid).session_blocking()
     }
 
@@ -165,7 +165,7 @@ impl RpcSpawnContext {
     pub fn object_mut_blocking<M: crate::rpc::ObjectMarker>(
         &self,
         key: Key<M>,
-    ) -> impl DerefMut<Target = M::Object> + Send + use<M> {
+    ) -> Result<impl DerefMut<Target = M::Object> + Send + use<M>, RpcError> {
         self.state.object_mut_blocking(key)
     }
 
@@ -356,7 +356,7 @@ impl RpcContext {
     pub async fn object_mut<M: crate::rpc::ObjectMarker>(
         &self,
         key: Key<M>,
-    ) -> impl DerefMut<Target = M::Object> + Send + use<M> {
+    ) -> Result<impl DerefMut<Target = M::Object> + Send + use<M>, RpcError> {
         self.state.object_mut(key).await
     }
 
@@ -367,12 +367,13 @@ impl RpcContext {
     pub async fn session(
         &self,
         sid: Key<Session>,
-    ) -> impl DerefMut<Target = probe_rs::Session> + Send + use<> {
-        let locked_cell = self.state.object_storage.lock().await.cell(sid);
+    ) -> Result<impl DerefMut<Target = probe_rs::Session> + Send + use<>, RpcError> {
+        let locked_cell = self.state.object_storage.lock().await.cell(sid)?;
         let guard = locked_cell.obj.clone().lock_owned().await;
-        tokio::sync::OwnedMutexGuard::map(guard, |e: &mut (dyn Any + Send)| {
-            &mut e.downcast_mut::<SessionEntry>().unwrap().session
-        })
+        Ok(tokio::sync::OwnedMutexGuard::map(
+            guard,
+            |e: &mut (dyn Any + Send)| &mut e.downcast_mut::<SessionEntry>().unwrap().session,
+        ))
     }
 
     pub fn debug_states(&self) -> DebugStatesMap {

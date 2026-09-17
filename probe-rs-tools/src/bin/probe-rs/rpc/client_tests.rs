@@ -46,3 +46,39 @@ async fn local_server_schema_matches_the_client() {
     drop(client);
     let _ = handle.await;
 }
+
+#[tokio::test]
+async fn unknown_session_key_is_an_error_not_a_panic() {
+    let (server, tx, rx) = RpcApp::create_server(
+        16,
+        ProbeAccess::All,
+        Arc::new(crate::rpc::probe_broker::ProbeBroker::new()),
+    );
+    let handle = tokio::spawn(async move { server.run().await });
+    let client = RpcClient::new_local_from_wire(tx, rx);
+
+    let session =
+        probe_rs_rpc_client::SessionInterface::new(client.clone(), probe_rs_rpc::Key::new());
+    let error = session
+        .core(0)
+        .read_memory_32(0x2000_0000, 1)
+        .await
+        .expect_err("a key this connection never issued must be rejected");
+    assert!(
+        format!("{error:?}").contains("Unknown"),
+        "unexpected error: {error:?}"
+    );
+    // Before the fix the first request panicked the connection and this one hung.
+    let error = session
+        .core(0)
+        .halt(std::time::Duration::from_millis(10))
+        .await
+        .expect_err("a key this connection never issued must be rejected");
+    assert!(format!("{error:?}").contains("Unknown"), "{error:?}");
+
+    // The connection survived both requests: the second one got an answer too.
+
+    drop(session);
+    drop(client);
+    let _ = handle.await;
+}

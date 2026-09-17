@@ -38,7 +38,9 @@ pub async fn list_tests(
         .reply::<ListTestsEndpoint>(header.seq_no, &resp)
         .await
         // The client may already be gone (browser tab closed); nothing to report to.
-        .unwrap_or_else(|_| tracing::warn!("client disconnected before the ListTestsEndpoint reply"));
+        .unwrap_or_else(|_| {
+            tracing::warn!("client disconnected before the ListTestsEndpoint reply")
+        });
 }
 
 fn list_tests_impl(
@@ -53,7 +55,8 @@ fn list_tests_impl(
 
     let core_id = request
         .rtt_client
-        .map(|rtt_client| ctx.object_mut_blocking(rtt_client).core_id())
+        .map(|rtt_client| ctx.object_mut_blocking(rtt_client).map(|c| c.core_id()))
+        .transpose()?
         .unwrap_or(0);
 
     let mut run_loop = RunLoop {
@@ -62,7 +65,7 @@ fn list_tests_impl(
     };
 
     {
-        let mut session = shared_session.session_blocking();
+        let mut session = shared_session.session_blocking()?;
         crate::rpc::functions::flash::prepare_boot_info(
             &request.boot_info,
             &mut session,
@@ -70,8 +73,12 @@ fn list_tests_impl(
         )?;
     }
 
-    let poller = request.rtt_client.map(|client| RttPoller {
-        rtt_client: shared_session.object_storage().cell(client),
+    let rtt_slot = request
+        .rtt_client
+        .map(|client| shared_session.object_storage().cell(client))
+        .transpose()?;
+    let poller = rtt_slot.map(|rtt_client| RttPoller {
+        rtt_client,
         clear_control_block: true,
         sender: |message| {
             sender
@@ -138,11 +145,12 @@ fn run_test_impl(
 
     let core_id = request
         .rtt_client
-        .map(|rtt_client| ctx.object_mut_blocking(rtt_client).core_id())
+        .map(|rtt_client| ctx.object_mut_blocking(rtt_client).map(|c| c.core_id()))
+        .transpose()?
         .unwrap_or(0);
 
     {
-        let mut session = shared_session.session_blocking();
+        let mut session = shared_session.session_blocking()?;
         let mut core = session.core(core_id)?;
         core.reset_and_halt(Duration::from_millis(500))?;
     }
@@ -158,8 +166,12 @@ fn run_test_impl(
         cancellation_token: ctx.cancellation_token(),
     };
 
-    let poller = request.rtt_client.map(|client| RttPoller {
-        rtt_client: shared_session.object_storage().cell(client),
+    let rtt_slot = request
+        .rtt_client
+        .map(|client| shared_session.object_storage().cell(client))
+        .transpose()?;
+    let poller = rtt_slot.map(|rtt_client| RttPoller {
+        rtt_client,
         clear_control_block: true,
         sender: |message| {
             sender
@@ -207,7 +219,7 @@ pub async fn test_kickoff(
 ) -> TestKickoffResponse {
     use probe_rs::CoreStatus;
 
-    let mut session = ctx.session(request.sessid).await;
+    let mut session = ctx.session(request.sessid).await?;
     let mut core = lift(session.core(request.core as usize))?;
 
     lift(core.run())?;

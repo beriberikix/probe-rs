@@ -101,7 +101,7 @@ pub async fn new_flash_loader(
     _header: VarHeader,
     request: NewFlashLoaderRequest,
 ) -> NewFlashLoaderResponse {
-    let session = ctx.session(request.sessid).await;
+    let session = ctx.session(request.sessid).await?;
     let mut loader = session.target().flash_loader();
     loader.read_rtt_output(request.read_flasher_rtt);
     Ok(ctx.store_object(loader).await)
@@ -112,7 +112,7 @@ pub async fn load_region(
     _header: VarHeader,
     request: LoadRegionRequest,
 ) -> NoResponse {
-    let mut loader = ctx.object_mut(request.loader).await;
+    let mut loader = ctx.object_mut(request.loader).await?;
     lift(loader.add_data(request.address, &request.data))?;
     Ok(())
 }
@@ -122,7 +122,7 @@ pub async fn build(
     _header: VarHeader,
     request: BuildRequest,
 ) -> BuildResponse {
-    let mut session = ctx.session(request.sessid).await;
+    let mut session = ctx.session(request.sessid).await?;
     let mut loader = lift(build_loader(
         &mut session,
         &request.path,
@@ -141,7 +141,7 @@ pub async fn build(
     // has not flashed itself.
     if let Some(rtt_client) = request.rtt_client {
         ctx.object_mut(rtt_client)
-            .await
+            .await?
             .configure_from_loader(&loader);
     }
 
@@ -155,7 +155,7 @@ pub async fn build(
 ///
 /// When `request.resume` is true, all cores are started afterward.
 pub async fn boot(ctx: &mut RpcContext, _header: VarHeader, request: BootRequest) -> NoResponse {
-    let mut session = ctx.session(request.sessid).await;
+    let mut session = ctx.session(request.sessid).await?;
 
     lift(prepare_boot_info(
         &request.boot_info,
@@ -180,9 +180,9 @@ fn flash_impl(
     sender: Sender<ProgressEvent>,
 ) -> NoResponse {
     let dry_run = ctx.dry_run(request.sessid);
-    let mut session = ctx.session_blocking(request.sessid);
+    let mut session = ctx.session_blocking(request.sessid)?;
 
-    let loader = ctx.object_mut_blocking(request.loader);
+    let loader = ctx.object_mut_blocking(request.loader)?;
 
     let mut options = flash_request_download_options(&request);
     options.dry_run = dry_run;
@@ -213,7 +213,7 @@ fn erase_all_impl(
     request: EraseAllRequest,
     sender: Sender<ProgressEvent>,
 ) -> NoResponse {
-    let mut session = ctx.session_blocking(request.sessid);
+    let mut session = ctx.session_blocking(request.sessid)?;
 
     let mut progress = FlashProgress::new(move |event| {
         from_library_progress_event(event, |event| {
@@ -246,7 +246,7 @@ fn erase_range_impl(
     request: EraseRangeRequest,
     sender: Sender<ProgressEvent>,
 ) -> NoResponse {
-    let mut session = ctx.session_blocking(request.sessid);
+    let mut session = ctx.session_blocking(request.sessid)?;
 
     let mut progress = FlashProgress::new(move |event| {
         from_library_progress_event(event, |event| {
@@ -282,8 +282,8 @@ fn verify_impl(
     request: VerifyRequest,
     sender: Sender<ProgressEvent>,
 ) -> VerifyResponse {
-    let mut session = ctx.session_blocking(request.sessid);
-    let loader = ctx.object_mut_blocking(request.loader);
+    let mut session = ctx.session_blocking(request.sessid)?;
+    let loader = ctx.object_mut_blocking(request.loader)?;
 
     let mut progress = FlashProgress::new(move |event| {
         from_library_progress_event(event, |event| {

@@ -36,7 +36,7 @@ macro_rules! probe_rs_try {
 
 macro_rules! with_core {
     ($ctx:expr, $sessid:expr, $core:expr, |$core_var:ident| $body:block) => {{
-        let mut session = $ctx.session($sessid).await;
+        let mut session = $ctx.session($sessid).await?;
         let mut $core_var = match session.core($core as usize) {
             Ok(core) => core,
             Err(e) => {
@@ -93,7 +93,7 @@ pub async fn core_step(
         .with_server_debug_state(request.sessid, |state| state.debug_info.clone())
         .await;
 
-    let mut session = ctx.session(request.sessid).await;
+    let mut session = ctx.session(request.sessid).await?;
     let mut core = lift(session.core(request.core as usize))?;
 
     let stepping_mode = convert::from_wire_stepping_mode(request.mode);
@@ -269,7 +269,7 @@ pub async fn core_dump(
     _header: VarHeader,
     request: CoreDumpRequest,
 ) -> RpcResult<WireCoreDump> {
-    let mut session = ctx.session(request.sessid).await;
+    let mut session = ctx.session(request.sessid).await?;
     let mut core = lift(session.core(request.core as usize))?;
 
     let dump = lift(CoreDump::dump_core(&mut core, request.ranges))?;
@@ -306,7 +306,7 @@ pub async fn core_handle_semihosting(
     let states = ctx.debug_states();
     let mut guard = states.lock().await;
 
-    let mut session = ctx.session(request.sessid).await;
+    let mut session = ctx.session(request.sessid).await?;
     let mut core = lift(session.core(request.core as usize))?;
 
     let status = lift(core.status())?;
@@ -321,10 +321,12 @@ pub async fn core_handle_semihosting(
         });
     };
 
-    let Some(state) = guard.get_mut(&request.sessid) else {
-        Err("No debug state for session")?
-    };
-    let sh = state.semihosting_state(request.core as usize);
+    // Semihosting needs no debug info: a session that never loaded an ELF still gets its state
+    // (the session key was validated above, so no state is created for an unknown session).
+    let sh = guard
+        .entry(request.sessid)
+        .or_default()
+        .semihosting_state(request.core as usize);
 
     let mut events = Vec::new();
     let result = lift(handle_semihosting_impl(&mut core, sh, command, &mut events))?;

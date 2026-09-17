@@ -5,6 +5,39 @@ use probe_rs::{
     rtt::{Error, Rtt, ScanRegion},
 };
 use probe_rs_rpc::rtt_config::ChannelMode;
+use std::time::{Duration, Instant};
+
+/// Paces control block scans that found nothing, so a target without (or not yet with) an RTT
+/// control block does not spend every poll scanning memory. A scan of all RAM can take hundreds
+/// of milliseconds; repeated back to back it starves everything else the run loop does, such as
+/// answering semihosting calls.
+#[derive(Debug, Default)]
+struct ScanBackoff {
+    delay: Duration,
+    next_scan: Option<Instant>,
+}
+
+impl ScanBackoff {
+    const MIN: Duration = Duration::from_millis(100);
+    const MAX: Duration = Duration::from_secs(1);
+
+    fn ready(&self, now: Instant) -> bool {
+        self.next_scan.is_none_or(|next| now >= next)
+    }
+
+    /// Record a scan that started at `started` and found nothing at `now`. The next scan waits
+    /// for twice the previous delay (100 ms to 1 s), and at least four times as long as the scan
+    /// took, so scanning uses at most a fifth of the time.
+    fn failed(&mut self, started: Instant, now: Instant) {
+        let took = now.saturating_duration_since(started);
+        self.delay = (self.delay * 2).clamp(Self::MIN, Self::MAX).max(took * 4);
+        self.next_scan = Some(now + self.delay);
+    }
+
+    fn reset(&mut self) {
+        *self = Self::default();
+    }
+}
 
 pub struct RttClient {
     pub scan_region: ScanRegion,
@@ -28,6 +61,9 @@ pub struct RttClient {
 
     /// The core used to poll the target.
     core_id: usize,
+
+    /// Pacing of control block scans that found nothing.
+    scan_backoff: ScanBackoff,
 }
 
 impl RttClient {
@@ -49,6 +85,7 @@ impl RttClient {
             try_attaching: true,
             polled_data: false,
             core_id,
+            scan_backoff: ScanBackoff::default(),
         }
     }
 
@@ -90,9 +127,18 @@ impl RttClient {
         let location = if let Some(location) = self.last_control_block_address {
             location
         } else {
+            // Probing an exact address is a single read; only scans are paced.
+            let paced = !matches!(self.scan_region, ScanRegion::Exact(_));
+            let started = Instant::now();
+            if paced && !self.scan_backoff.ready(started) {
+                return Ok(false);
+            }
             let location = match Rtt::find_control_block(core, &self.scan_region) {
                 Ok(location) => location,
                 Err(Error::ControlBlockNotFound) => {
+                    if paced {
+                        self.scan_backoff.failed(started, Instant::now());
+                    }
                     tracing::debug!("Failed to attach - control block not found");
                     return Ok(false);
                 }
@@ -104,6 +150,7 @@ impl RttClient {
                 Err(error) => return Err(error),
             };
 
+            self.scan_backoff.reset();
             self.last_control_block_address = Some(location);
             location
         };
@@ -303,6 +350,31 @@ impl RttClient {
 mod test {
     use super::*;
     use probe_rs::config::Registry;
+
+    #[test]
+    fn scan_backoff_doubles_up_to_a_second_and_scales_with_scan_time() {
+        let mut backoff = ScanBackoff::default();
+        let t0 = Instant::now();
+        assert!(backoff.ready(t0));
+
+        // Fast scans: 100 ms, 200 ms, 400 ms, 800 ms, 1 s, 1 s.
+        let mut now = t0;
+        for expected in [100, 200, 400, 800, 1000, 1000] {
+            backoff.failed(now, now);
+            assert_eq!(backoff.delay, Duration::from_millis(expected));
+            assert!(!backoff.ready(now + Duration::from_millis(expected - 1)));
+            now += Duration::from_millis(expected);
+            assert!(backoff.ready(now));
+        }
+
+        // A slow scan (a large RAM region) waits four times as long as it took.
+        backoff.reset();
+        backoff.failed(t0, t0 + Duration::from_millis(600));
+        assert_eq!(backoff.delay, Duration::from_millis(2400));
+
+        backoff.reset();
+        assert!(backoff.ready(t0));
+    }
 
     const CONTROL_BLOCK: u64 = 0x2000_0000;
     const ELSEWHERE: u64 = 0x2000_1000;

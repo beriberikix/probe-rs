@@ -5,7 +5,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use probe_rs::{Core, CoreType, Error, HaltReason, VectorCatchCondition};
+use probe_rs::{Core, CoreStatus, CoreType, Error, HaltReason, VectorCatchCondition};
 
 use crate::rpc::SessionState;
 
@@ -75,7 +75,7 @@ impl RunLoop {
 
         // Prepare run loop
         {
-            let mut session = shared_session.session_blocking();
+            let mut session = shared_session.session_blocking()?;
             let mut core = session.core(self.core_id)?;
             let needs_vector_catch = catch_hardfault || catch_reset || catch_svc || catch_hlt;
 
@@ -131,7 +131,7 @@ impl RunLoop {
         let result = self.do_run_until(shared_session, &mut poller, timeout, &mut predicate);
 
         // Clean up run loop
-        let mut session = shared_session.session_blocking();
+        let mut session = shared_session.session_blocking()?;
         let mut core = session.core(self.core_id)?;
         // Always clean up after RTT but don't overwrite the original result.
         let poller_exit_result = poller.exit(&mut core);
@@ -154,14 +154,19 @@ impl RunLoop {
         F: FnMut(HaltReason, &mut Core) -> Result<Option<R>>,
     {
         let start = Instant::now();
-        let core_count = shared_session.session_blocking().target().cores.len();
+        let core_count = shared_session.session_blocking()?.target().cores.len();
         let mut next_wakeup = vec![start; core_count];
+        // Secondary cores that were already halted when first observed. A core the firmware
+        // never starts (e.g. the ESP32-S3 APP CPU, parked at a ROM breakpoint) must not end the
+        // run loop; it is watched again once it runs.
+        let mut observed = vec![false; core_count];
+        let mut parked = vec![false; core_count];
 
         loop {
             let mut next_poll;
 
             {
-                let mut session = shared_session.session_blocking();
+                let mut session = shared_session.session_blocking()?;
 
                 {
                     let mut core = session.core(self.core_id)?;
@@ -202,6 +207,24 @@ impl RunLoop {
                             continue;
                         }
                     };
+
+                    if !observed[idx] {
+                        observed[idx] = true;
+                        parked[idx] = is_halted(&mut core);
+                        if parked[idx] {
+                            tracing::debug!(
+                                "Core {idx} is halted at start; not watching it until it runs"
+                            );
+                        }
+                    } else if parked[idx] && !is_halted(&mut core) {
+                        tracing::debug!("Core {idx} left its initial halt; watching it");
+                        parked[idx] = false;
+                    }
+                    if parked[idx] {
+                        *wakeup = Instant::now() + WATCH_POLL_INTERVAL;
+                        next_poll = next_poll.min(WATCH_POLL_INTERVAL);
+                        continue;
+                    }
 
                     match self.poll_core(&mut core, false, poller, predicate) {
                         Ok(ControlFlow::Break(reason)) => return Ok(reason),
@@ -340,4 +363,8 @@ where
             NoopPoller.exit(core)
         }
     }
+}
+
+fn is_halted(core: &mut Core<'_>) -> bool {
+    matches!(core.status(), Ok(CoreStatus::Halted(_)))
 }

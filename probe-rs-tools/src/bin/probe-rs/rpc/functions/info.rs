@@ -46,7 +46,7 @@ pub async fn target_metadata(
     _hdr: VarHeader,
     request: TargetMetadataRequest,
 ) -> probe_rs_rpc::info::TargetMetadataResponse {
-    let session = ctx.session(request.sessid).await;
+    let session = ctx.session(request.sessid).await?;
     let target = session.target();
     Ok(WireSessionTargetMetadata {
         target_name: target.name.clone(),

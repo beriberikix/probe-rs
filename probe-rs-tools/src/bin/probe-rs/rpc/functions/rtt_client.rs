@@ -17,7 +17,7 @@ pub async fn create_rtt_client(
     _header: VarHeader,
     request: CreateRttClientRequest,
 ) -> CreateRttClientResponse {
-    let session = ctx.session(request.sessid).await;
+    let session = ctx.session(request.sessid).await?;
 
     let rtt_scan_regions = match request.scan_regions {
         ScanRegion::Ram => rtt::ScanRegion::Ram,
@@ -70,8 +70,8 @@ pub async fn write_rtt_down(
 
         // Scoped so the session and RTT client guards drop before we sleep
         {
-            let mut session = ctx.session(request.sessid).await;
-            let mut rtt_client = ctx.object_mut(request.rtt_client).await;
+            let mut session = ctx.session(request.sessid).await?;
+            let mut rtt_client = ctx.object_mut(request.rtt_client).await?;
 
             let core_id = rtt_client.core_id();
             let mut core = lift(session.core(core_id))?;
@@ -106,8 +106,8 @@ pub async fn get_rtt_channels(
     _header: VarHeader,
     request: RttChannelRequest,
 ) -> RttChannelsResponse {
-    let mut session = ctx.session(request.sessid).await;
-    let mut rtt_client = ctx.object_mut(request.rtt_client).await;
+    let mut session = ctx.session(request.sessid).await?;
+    let mut rtt_client = ctx.object_mut(request.rtt_client).await?;
 
     let core_id = rtt_client.core_id();
     let mut core = lift(session.core(core_id))?;
@@ -138,8 +138,8 @@ pub async fn clear_rtt_control_block(
     _header: VarHeader,
     request: RttChannelRequest,
 ) -> NoResponse {
-    let mut session = ctx.session(request.sessid).await;
-    let mut rtt_client = ctx.object_mut(request.rtt_client).await;
+    let mut session = ctx.session(request.sessid).await?;
+    let mut rtt_client = ctx.object_mut(request.rtt_client).await?;
 
     let core_id = rtt_client.core_id();
     let mut core = lift(session.core(core_id))?;
@@ -153,8 +153,8 @@ pub async fn poll_rtt_up(
     _header: VarHeader,
     request: PollRttUpRequest,
 ) -> PollRttUpResponse {
-    let mut session = ctx.session(request.sessid).await;
-    let mut rtt_client = ctx.object_mut(request.rtt_client).await;
+    let mut session = ctx.session(request.sessid).await?;
+    let mut rtt_client = ctx.object_mut(request.rtt_client).await?;
 
     let core_id = rtt_client.core_id();
     let mut core = lift(session.core(core_id))?;
@@ -179,8 +179,8 @@ pub async fn clean_up_rtt(
     _header: VarHeader,
     request: RttChannelRequest,
 ) -> NoResponse {
-    let mut session = ctx.session(request.sessid).await;
-    let mut rtt_client = ctx.object_mut(request.rtt_client).await;
+    let mut session = ctx.session(request.sessid).await?;
+    let mut rtt_client = ctx.object_mut(request.rtt_client).await?;
 
     let core_id = rtt_client.core_id();
     let mut core = lift(session.core(core_id))?;

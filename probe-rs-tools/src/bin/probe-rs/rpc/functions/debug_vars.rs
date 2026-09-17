@@ -135,7 +135,7 @@ pub async fn variables(
     // Take the session/core AFTER locking debug_states: `probe_rs::Core` is
     // `!Send`, so it must not be held across the `debug_states().lock().await`
     // (the spawned server future must remain `Send`).
-    let mut session = ctx.session(request.sessid).await;
+    let mut session = ctx.session(request.sessid).await?;
     let mut core = lift(session.core(request.core as usize))?;
 
     let Some(state) = guard.get_mut(&request.sessid) else {
@@ -353,7 +353,7 @@ pub async fn set_variable(
     let states = ctx.debug_states();
     let mut guard = states.lock().await;
 
-    let mut session = ctx.session(request.sessid).await;
+    let mut session = ctx.session(request.sessid).await?;
     let mut core = lift(session.core(request.core as usize))?;
 
     let Some(state) = guard.get_mut(&request.sessid) else {
@@ -457,7 +457,7 @@ pub async fn evaluate(
         Err("No debug state for session")?
     };
 
-    let mut session = ctx.session(request.sessid).await;
+    let mut session = ctx.session(request.sessid).await?;
     let mut core = lift(session.core(request.core as usize))?;
 
     let Some(state) = guard.get_mut(&request.sessid) else {

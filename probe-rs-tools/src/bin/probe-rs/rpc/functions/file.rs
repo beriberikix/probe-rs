@@ -44,7 +44,7 @@ pub async fn append_temp_file(
 ) -> NoResponse {
     use std::io::Write as _;
 
-    let mut file = ctx.object_mut(request.key).await;
+    let mut file = ctx.object_mut(request.key).await?;
 
     lift(
         file.as_file_mut()

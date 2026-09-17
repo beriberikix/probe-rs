@@ -41,7 +41,7 @@ async fn unwind_all_cores(
     ctx: &mut RpcContext,
     request: &TakeStackTraceRequest,
 ) -> probe_rs_rpc::RpcResult<Vec<(u32, Vec<StackTraceFrame>)>> {
-    let mut session = ctx.session(request.sessid).await;
+    let mut session = ctx.session(request.sessid).await?;
 
     let Some(debug_info) = DebugInfo::from_file(&request.path).ok() else {
         Err("No debug info found.")?
@@ -110,7 +110,7 @@ pub async fn take_rich_stack_trace(
         .with_server_debug_state(request.sessid, |state| state.debug_info.clone())
         .await;
 
-    let mut session = ctx.session(request.sessid).await;
+    let mut session = ctx.session(request.sessid).await?;
 
     // Per core: unwind, build locals via `get_stackframe_info`, build the
     // static scope cache.

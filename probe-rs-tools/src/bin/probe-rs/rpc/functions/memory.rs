@@ -82,8 +82,8 @@ pub async fn write_memory<W: Word>(
     _header: VarHeader,
     request: WriteMemoryRequest<W>,
 ) -> NoResponse {
-    let mut session = ctx.session(request.sessid).await;
-    let mut core = session.core(request.core as usize).unwrap();
+    let mut session = ctx.session(request.sessid).await?;
+    let mut core = lift(session.core(request.core as usize))?;
     lift(W::write(&mut core, request.address, &request.data))?;
     Ok(())
 }
@@ -93,7 +93,7 @@ pub async fn read_memory<W: Word>(
     _header: VarHeader,
     request: ReadMemoryRequest,
 ) -> RpcResult<Vec<W>> {
-    let mut session = ctx.session(request.sessid).await;
+    let mut session = ctx.session(request.sessid).await?;
     let mut core = lift(session.core(request.core as usize))?;
 
     let mut words = vec![W::default(); request.count as usize];
@@ -109,7 +109,7 @@ pub async fn read_bytes(
     _header: VarHeader,
     request: ReadBytesRequest,
 ) -> RpcResult<Vec<u8>> {
-    let mut session = ctx.session(request.sessid).await;
+    let mut session = ctx.session(request.sessid).await?;
     let mut core = lift(session.core(request.core as usize))?;
 
     fn chunk_size(count: usize, max_chunk_size: usize) -> usize {

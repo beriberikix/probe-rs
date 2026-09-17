@@ -497,8 +497,14 @@ impl RpcClient {
         expected: &SchemaReport,
     ) -> Result<SchemaReport, SchemaError<WireError>> {
         // Our own copy of hostClient::get_schema_report so that we can tune capacity.
-        let expected_messages =
-            expected.endpoints.len() + expected.topics_in.len() + expected.topics_out.len();
+        // The server sends one message per type as well as per endpoint and topic (hundreds in
+        // total), and the collector below shares a task with the request instead of draining
+        // concurrently; on wasm a full subscription drops messages at once
+        // (`subscriber_timeout_if_full` is zero). Size the subscription for the whole report.
+        let expected_messages = expected.types.len()
+            + expected.endpoints.len()
+            + expected.topics_in.len()
+            + expected.topics_out.len();
         let Ok(mut sub) = self
             .client
             .subscribe_multi::<GetAllSchemaDataTopic>(expected_messages)

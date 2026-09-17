@@ -8,6 +8,7 @@ use std::{
 
 use parking_lot::Mutex as ParkingMutex;
 use probe_rs::config::Registry;
+use probe_rs_rpc::RpcError;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
@@ -101,12 +102,27 @@ impl ObjectStorage {
     }
 
     /// Ensures locks on `ObjectStorage` are held for as short a time as possible.
-    pub fn cell<M: ObjectMarker>(&self, key: Key<M>) -> ObjectStorageSlot<M::Object> {
-        let obj = self.storage.get(&key.id()).unwrap();
-        ObjectStorageSlot {
+    ///
+    /// Returns an error for a key this connection does not own (stale, or from another
+    /// connection), instead of panicking the connection.
+    pub fn cell<M: ObjectMarker>(
+        &self,
+        key: Key<M>,
+    ) -> Result<ObjectStorageSlot<M::Object>, RpcError> {
+        let obj = self.storage.get(&key.id()).ok_or_else(|| {
+            RpcError::from(format!(
+                "Unknown {} handle {:#x}",
+                std::any::type_name::<M>()
+                    .rsplit("::")
+                    .next()
+                    .unwrap_or("object"),
+                key.id()
+            ))
+        })?;
+        Ok(ObjectStorageSlot {
             obj: obj.clone(),
             _type: PhantomData,
-        }
+        })
     }
 }
 
@@ -142,19 +158,19 @@ impl ConnectionState {
     pub async fn object_mut<M: ObjectMarker>(
         &self,
         key: Key<M>,
-    ) -> impl DerefMut<Target = M::Object> + Send + use<M> {
+    ) -> Result<impl DerefMut<Target = M::Object> + Send + use<M>, RpcError> {
         // MUST be two separate statements so that the lock is released.
-        let locked_cell = self.object_storage.lock().await.cell(key);
-        locked_cell.get().await
+        let locked_cell = self.object_storage.lock().await.cell(key)?;
+        Ok(locked_cell.get().await)
     }
 
     pub fn object_mut_blocking<M: ObjectMarker>(
         &self,
         key: Key<M>,
-    ) -> impl DerefMut<Target = M::Object> + Send + use<M> {
+    ) -> Result<impl DerefMut<Target = M::Object> + Send + use<M>, RpcError> {
         // MUST be two separate statements so that the lock is released.
-        let locked_cell = self.object_storage.blocking_lock().cell(key);
-        locked_cell.get_blocking()
+        let locked_cell = self.object_storage.blocking_lock().cell(key)?;
+        Ok(locked_cell.get_blocking())
     }
 
     pub async fn set_session(
@@ -197,12 +213,15 @@ impl SessionState<'_> {
     }
 
     /// Blocks while other users hold the session.
-    pub fn session_blocking(&self) -> impl DerefMut<Target = probe_rs::Session> + Send + use<> {
-        let obj_cell = self.object_storage().cell(self.session);
+    pub fn session_blocking(
+        &self,
+    ) -> Result<impl DerefMut<Target = probe_rs::Session> + Send + use<>, RpcError> {
+        let obj_cell = self.object_storage().cell(self.session)?;
         let guard = obj_cell.obj.clone().blocking_lock_owned();
-        tokio::sync::OwnedMutexGuard::map(guard, |e: &mut (dyn Any + Send)| {
-            &mut e.downcast_mut::<SessionEntry>().unwrap().session
-        })
+        Ok(tokio::sync::OwnedMutexGuard::map(
+            guard,
+            |e: &mut (dyn Any + Send)| &mut e.downcast_mut::<SessionEntry>().unwrap().session,
+        ))
     }
 
     pub fn dry_run(&self) -> bool {

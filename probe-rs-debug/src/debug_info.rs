@@ -874,7 +874,15 @@ impl DebugInfo {
                 };
             }
 
-            let unwound_return_address = unwind_registers
+            // With the Xtensa windowed ABI, the callee's a0 already holds the return address into
+            // the caller; the unwound a0 (from the window spill area) is the caller's own return
+            // address. Using it here would skip the caller frame.
+            let return_address_registers = if instruction_set == Some(InstructionSet::Xtensa) {
+                &callee_frame_registers
+            } else {
+                &unwind_registers
+            };
+            let unwound_return_address = return_address_registers
                 .get_register_by_role(&RegisterRole::ReturnAddress)
                 .ok()
                 .and_then(|reg| reg.value);

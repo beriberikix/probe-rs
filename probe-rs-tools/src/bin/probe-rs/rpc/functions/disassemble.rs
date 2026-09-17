@@ -23,7 +23,7 @@ pub async fn disassemble(
         .with_server_debug_state(request.sessid, |state| state.debug_info.clone())
         .await;
 
-    let mut session = ctx.session(request.sessid).await;
+    let mut session = ctx.session(request.sessid).await?;
     let mut core = lift(session.core(request.core as usize))?;
     let instructions = disassemble_target_memory(
         &mut core,
