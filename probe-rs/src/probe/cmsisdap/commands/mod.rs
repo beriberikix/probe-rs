@@ -473,22 +473,42 @@ async fn send_command_inner<Req: Request>(
     let _ = device.write(&buffer[..size]).await?;
     trace_buffer("Transmit buffer", &buffer[..size]);
 
-    // Read back response.
-    let bytes_read = device.read(&mut buffer).await?;
-    let response_data = &buffer[..bytes_read];
-    trace_buffer("Receive buffer", response_data);
+    // Read back the response. A reply that does not belong to this request is
+    // proof that an earlier reply was never read - which is what a browser tab
+    // that went away mid-command leaves behind, since WebUSB cannot cancel the
+    // transfer that would have collected it (see `drain`). It also means our own
+    // reply is still queued, so reading again resynchronises instead of blocking.
+    // Natively `drain` handles this at open time, so no retry is needed there.
+    let mut resyncs = if cfg!(target_arch = "wasm32") { 2 } else { 0 };
+    loop {
+        let bytes_read = device.read(&mut buffer).await?;
+        let response_data = &buffer[..bytes_read];
+        trace_buffer("Receive buffer", response_data);
 
-    if response_data.is_empty() {
-        return Err(SendError::NotEnoughData);
-    }
+        if response_data.is_empty() {
+            return Err(SendError::NotEnoughData);
+        }
 
-    if response_data[0] == Req::COMMAND_ID as u8 {
-        request.parse_response(&response_data[1..])
-    } else {
-        Err(SendError::CommandIdMismatch(
-            response_data[0],
-            Req::COMMAND_ID,
-        ))
+        let parsed = if response_data[0] == Req::COMMAND_ID as u8 {
+            request.parse_response(&response_data[1..])
+        } else {
+            Err(SendError::CommandIdMismatch(
+                response_data[0],
+                Req::COMMAND_ID,
+            ))
+        };
+        match parsed {
+            Ok(response) => return Ok(response),
+            Err(error) if resyncs > 0 => {
+                resyncs -= 1;
+                tracing::warn!(
+                    "Discarding a stale CMSIS-DAP response left by an earlier session                      (command {:#04x}, {error:?}); reading the reply to {:?} again",
+                    response_data[0],
+                    Req::COMMAND_ID,
+                );
+            }
+            Err(error) => return Err(error),
+        }
     }
 }
 

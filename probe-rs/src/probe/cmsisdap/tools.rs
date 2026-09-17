@@ -148,6 +148,43 @@ fn get_cmsisdap_hid_info(device: &hidapi::DeviceInfo) -> Option<DebugProbeInfo> 
 
 /// Attempt to open the given device in CMSIS-DAP v2 mode
 pub async fn open_v2_device(device_info: &DeviceInfo) -> Option<CmsisDapDevice> {
+    #[cfg(not(target_arch = "wasm32"))]
+    return open_v2_device_once(device_info).await;
+
+    // In the browser a page that goes away mid-command leaves its transfers queued -
+    // WebUSB has no way to cancel one (https://github.com/WICG/webusb/issues/25) - and
+    // the probe then answers nothing at all, so opening it fails with a read timeout
+    // until the device handle is closed, which is what finally cancels them. Until now
+    // that meant running native probe-rs once to get the probe back. So check the probe
+    // answers, and if it does not, close it (dropping the handle) and open it again.
+    #[cfg(target_arch = "wasm32")]
+    {
+        for attempt in 1..=3 {
+            let mut device = open_v2_device_once(device_info).await?;
+            match super::commands::send_command(
+                &mut device,
+                &super::commands::general::info::PacketSizeCommand {},
+            )
+            .await
+            {
+                Ok(_) => return Some(device),
+                Err(error) => {
+                    tracing::warn!(
+                        "The probe did not answer after opening it (attempt {attempt}): {error}. \
+                         Closing and reopening it to cancel transfers left over from an earlier session."
+                    );
+                    drop(device);
+                    crate::probe::usb_util::wait(std::time::Duration::from_millis(100)).await;
+                }
+            }
+        }
+        tracing::error!("Could not get the probe to answer after reopening it three times");
+        None
+    }
+}
+
+/// One attempt at opening the given device in CMSIS-DAP v2 mode.
+async fn open_v2_device_once(device_info: &DeviceInfo) -> Option<CmsisDapDevice> {
     // Open device handle and read basic information
     let vid = device_info.vendor_id();
     let pid = device_info.product_id();
