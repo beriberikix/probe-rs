@@ -5,6 +5,20 @@ use nusb::{
 };
 use std::{io, time::Duration};
 
+// WebUSB cannot cancel a transfer, so after a timeout the endpoint still has one
+// queued and later reads are out of step: on wasm a timeout is terminal for the
+// probe (close and reopen it), never something to retry.
+#[cfg(not(target_family = "wasm"))]
+const TIMEOUT_WRITE_MSG: &str = "bulk write timed out";
+#[cfg(not(target_family = "wasm"))]
+const TIMEOUT_READ_MSG: &str = "bulk read timed out";
+#[cfg(target_family = "wasm")]
+const TIMEOUT_WRITE_MSG: &str =
+    "bulk write timed out; WebUSB cannot cancel the transfer, so the probe must be reopened";
+#[cfg(target_family = "wasm")]
+const TIMEOUT_READ_MSG: &str =
+    "bulk read timed out; WebUSB cannot cancel the transfer, so the probe must be reopened";
+
 pub trait InterfaceExt {
     async fn read_bulk(&self, endpoint: u8, buf: &mut [u8], timeout: Duration)
     -> io::Result<usize>;
@@ -129,10 +143,7 @@ impl InterfaceExt for Interface {
 
         let Some(comp) = timed!(stats::XFER_NS, with_timeout(ep_out.next_complete(), timeout).await) else {
             cancel_and_drain(&mut ep_out).await;
-            return Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                "bulk write timed out",
-            ));
+            return Err(io::Error::new(io::ErrorKind::TimedOut, TIMEOUT_WRITE_MSG));
         };
 
         comp.status.map_err(io::Error::from)?;
@@ -162,10 +173,7 @@ impl InterfaceExt for Interface {
 
         let Some(comp) = timed!(stats::XFER_NS, with_timeout(ep_in.next_complete(), timeout).await) else {
             cancel_and_drain(&mut ep_in).await;
-            return Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                "bulk read timed out",
-            ));
+            return Err(io::Error::new(io::ErrorKind::TimedOut, TIMEOUT_READ_MSG));
         };
 
         comp.status.map_err(io::Error::from)?;

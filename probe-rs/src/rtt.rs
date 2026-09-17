@@ -50,7 +50,6 @@ pub use channel::*;
 use crate::Session;
 use crate::{Core, MemoryInterface, config::MemoryRegion};
 use std::ops::Range;
-use std::thread;
 use std::time::Duration;
 use web_time::Instant;
 use zerocopy::FromBytes;
@@ -521,7 +520,7 @@ async fn try_attach_to_rtt_inner(
             Err(_) if t.elapsed() < timeout => {
                 attempt += 1;
                 tracing::debug!("Failed to initialize RTT. Retrying until timeout.");
-                thread::sleep(Duration::from_millis(50));
+                crate::probe::usb_util::wait(Duration::from_millis(50)).await;
             }
             other => return other,
         }

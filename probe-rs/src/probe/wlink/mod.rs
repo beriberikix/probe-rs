@@ -500,7 +500,7 @@ impl JtagAccess for WchLink {
                         tracing::trace!("dmi write 0x{:02x} 0x{:08x} op={}", addr, data, op);
                         if dmi_addr == 0x10 && dmi_value == 0x40000001 {
                             // needs additional sleep for a resume operation
-                            std::thread::sleep(Duration::from_millis(10));
+                            crate::probe::usb_util::wait(Duration::from_millis(10)).await;
                         }
                         (addr, data, op)
                     }

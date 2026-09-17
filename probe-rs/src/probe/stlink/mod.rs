@@ -30,7 +30,6 @@ use crate::{
 use scroll::{BE, LE, Pread, Pwrite};
 
 use std::collections::BTreeSet;
-use std::thread;
 use std::{cmp::Ordering, sync::Arc, time::Duration};
 
 use constants::{JTagFrequencyToDivider, Mode, Status, SwdFrequencyToDelayCount, commands};
@@ -378,7 +377,7 @@ impl StLink<StLinkUsbDevice> {
             // Normally this would be the timeout we pass to the probe to settle the pins.
             // The ST-Link is not capable of this, so we just wait for this time on the host
             // and assume it has settled until then.
-            thread::sleep(Duration::from_micros(pin_wait as u64));
+            crate::probe::usb_util::wait(Duration::from_micros(pin_wait as u64)).await;
 
             // We signal that we cannot read the pin state.
             Ok(0xFFFF_FFFF)
@@ -549,6 +548,11 @@ impl<D: StLinkUsb> StLink<D> {
 
         if let Err(e) = self.enter_idle().await {
             match e {
+                // On WebUSB the failed transfer cannot be cancelled, so a reset-and-retry
+                // would read out of step: report the error instead. (Untested on hardware.)
+                #[cfg(target_family = "wasm")]
+                StlinkError::Usb(_) => return Err(e),
+                #[cfg(not(target_family = "wasm"))]
                 StlinkError::Usb(_) => {
                     // Reset the device, and try to enter idle mode again
                     self.device.reset().await?;
@@ -1979,7 +1983,7 @@ async fn retry_on_wait<R>(
         }
 
         // Sleep with exponential backoff.
-        thread::sleep(Duration::from_micros(100 << attempt));
+        crate::probe::usb_util::wait(Duration::from_micros(100 << attempt)).await;
     }
 
     tracing::warn!("too many retries, giving up");

@@ -1,5 +1,5 @@
 //! Support for the Vorago VA416xx device family.
-use std::{sync::Arc, thread, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use probe_rs_target::CoreType;
 
@@ -91,7 +91,7 @@ impl ArmDebugSequence for Va416xx {
                     if i == NUM_RETRIES - 1 {
                         return Err(e);
                     }
-                    thread::sleep(Duration::from_millis(50));
+                    crate::probe::usb_util::wait(Duration::from_millis(50)).await;
                 }
             }
         }
@@ -119,7 +119,7 @@ impl ArmDebugSequence for Va416xx {
                 if i >= NUM_HALT_RETRIES - 1 {
                     return Err(ArmError::Timeout);
                 }
-                thread::sleep(Duration::from_millis(50));
+                crate::probe::usb_util::wait(Duration::from_millis(50)).await;
             }
         }
 

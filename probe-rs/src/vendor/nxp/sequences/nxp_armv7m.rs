@@ -5,7 +5,6 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    thread,
     time::Duration,
 };
 use web_time::Instant;
@@ -81,7 +80,7 @@ impl MIMXRT10xx {
                 tracing::debug!("Exceeded timeout while waiting for the core to {action}");
                 return Err(ArmError::Timeout);
             }
-            thread::sleep(Duration::from_millis(1));
+            crate::probe::usb_util::wait(Duration::from_millis(1)).await;
         }
 
         Ok(())
@@ -140,7 +139,7 @@ impl ArmDebugSequence for MIMXRT10xx {
         interface.flush().await.ok();
 
         // Wait for the reset to finish...
-        thread::sleep(Duration::from_millis(100));
+        crate::probe::usb_util::wait(Duration::from_millis(100)).await;
 
         let start = Instant::now();
         loop {
@@ -240,7 +239,7 @@ impl MIMXRT11xx {
                 tracing::debug!("Exceeded timeout while waiting for the core to {action}");
                 return Err(ArmError::Timeout);
             }
-            thread::sleep(Duration::from_millis(1));
+            crate::probe::usb_util::wait(Duration::from_millis(1)).await;
         }
 
         Ok(())
@@ -277,7 +276,7 @@ impl MIMXRT11xx {
                 return Err(ArmError::Timeout);
             }
 
-            thread::sleep(Duration::from_millis(1));
+            crate::probe::usb_util::wait(Duration::from_millis(1)).await;
         }
     }
 

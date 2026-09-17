@@ -1488,7 +1488,7 @@ impl ProbeFactory for BlackMagicProbeFactory {
                 ))
             })?;
             // A delay appears necessary to allow the BMP to recognize the DTR signal.
-            std::thread::sleep(Duration::from_millis(250));
+            crate::probe::usb_util::wait(Duration::from_millis(250)).await;
             let reader = port;
             let writer = reader.try_clone().map_err(|e| {
                 DebugProbeError::ProbeCouldNotBeCreated(ProbeCreationError::CouldNotOpen(

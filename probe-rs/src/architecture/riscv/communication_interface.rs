@@ -814,7 +814,7 @@ impl<'state> RiscvCommunicationInterface<'state> {
                 return Err(RiscvError::Timeout);
             }
             // Wait a bit before polling again.
-            std::thread::sleep(Duration::from_millis(1));
+            crate::probe::usb_util::wait(Duration::from_millis(1)).await;
         }
 
         Ok(())

@@ -14,7 +14,8 @@ use anyhow::anyhow;
 use serialport::{SerialPort, SerialPortType, available_ports};
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 use std::{env, fmt};
 
 const START_WORD: [u8; 2] = [0x7E, 0x79];

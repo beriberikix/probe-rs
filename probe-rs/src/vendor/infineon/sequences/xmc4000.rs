@@ -6,7 +6,6 @@ use crate::architecture::arm::sequences::{ArmDebugSequence, ArmDebugSequenceErro
 use crate::architecture::arm::{ArmError, ArmProbeInterface, FullyQualifiedApAddress};
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::thread;
 use std::time::Duration;
 use web_time::Instant;
 
@@ -404,7 +403,7 @@ impl ArmDebugSequence for XMC4000 {
         // deassert nRST here rather than waiting for ResetHardwareDeassert.
         //
         // Wait a moment for the reset signal to settle.
-        thread::sleep(Duration::from_millis(100));
+        crate::probe::usb_util::wait(Duration::from_millis(100)).await;
 
         // Indicate to ourselves that we're doing a cold reset, and that the system software began
         // executing now

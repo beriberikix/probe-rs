@@ -76,7 +76,7 @@ impl ArmDebugSequence for CC13xxCC26xx {
         probe.flush().await.ok();
 
         // Wait for the system to reset
-        std::thread::sleep(Duration::from_millis(1));
+        crate::probe::usb_util::wait(Duration::from_millis(1)).await;
 
         // Re-initializing the core(s) is on us.
         let ap = probe.fully_qualified_address();

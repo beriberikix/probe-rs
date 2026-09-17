@@ -1,8 +1,8 @@
 use std::{
     sync::Arc,
-    thread,
-    time::{Duration, Instant},
+    time::Duration,
 };
+use web_time::Instant;
 
 use probe_rs_target::CoreType;
 
@@ -148,7 +148,7 @@ impl OL23D0Core<'_> {
             .await?;
 
         // Give the system time to reset.
-        thread::sleep(Duration::from_millis(10));
+        crate::probe::usb_util::wait(Duration::from_millis(10)).await;
 
         // If breakpoints were set, try to wait for them to be halted, else continue.
         self.wait_for_core_halted(timeout).await.ok();
@@ -168,7 +168,7 @@ impl OL23D0Core<'_> {
                 return Err(ArmError::Timeout);
             }
             // Wait a bit before polling again.
-            std::thread::sleep(Duration::from_millis(1));
+            crate::probe::usb_util::wait(Duration::from_millis(1)).await;
         }
 
         Ok(())

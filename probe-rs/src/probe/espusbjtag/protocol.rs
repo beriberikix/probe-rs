@@ -176,6 +176,8 @@ impl ProtocolHandler {
                     "Timeout accessing device descriptor",
                 ));
             }
+            // Don't spin on an empty descriptor.
+            crate::probe::usb_util::wait(Duration::from_millis(10)).await;
         };
 
         let protocol_version = buffer[0];
@@ -242,6 +244,19 @@ impl ProtocolHandler {
                 .is_ok()
         };
 
+        // Draining by reading until a read times out is unsafe on WebUSB: the timed-out
+        // transfer cannot be cancelled and would swallow the next real response. On wasm,
+        // resynchronise with the clocked bits below and read only what they produce.
+        #[cfg(target_family = "wasm")]
+        {
+            let _ = flush_ep;
+            for _ in 0..16 {
+                this.shift_bit(true, true, false).await.unwrap();
+            }
+            this.flush().await.unwrap();
+            this.response.clear();
+        }
+        #[cfg(not(target_family = "wasm"))]
         if flush_ep(&mut this).await {
             while flush_ep(&mut this).await {}
         } else {

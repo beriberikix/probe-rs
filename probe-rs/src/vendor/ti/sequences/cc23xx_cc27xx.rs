@@ -3,8 +3,8 @@ use bitfield::bitfield;
 use std::ops::DerefMut;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 use crate::MemoryMappedRegister;
 use crate::architecture::arm::ArmProbeInterface;
@@ -239,7 +239,7 @@ impl ArmDebugSequence for CC23xxCC27xx {
             .write_word_32(Aircr::get_mmio_address(), aircr.into())
             .await?;
         probe.flush().await.ok();
-        thread::sleep(Duration::from_millis(10));
+        crate::probe::usb_util::wait(Duration::from_millis(10)).await;
 
         // Re-initializing the core(s) is on us.
         let ap = probe.fully_qualified_address();

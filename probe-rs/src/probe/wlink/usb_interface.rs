@@ -76,7 +76,12 @@ impl WchLinkUsbDevice {
         let mut rxbuf = [0u8; 64];
         let len = cmd.to_bytes(&mut rxbuf)?;
 
+        // A WebUSB round trip is much slower than a native one, and a timeout there
+        // cannot be recovered from, so allow more time. (Untested on hardware.)
+        #[cfg(not(target_family = "wasm"))]
         let timeout = Duration::from_millis(100);
+        #[cfg(target_family = "wasm")]
+        let timeout = Duration::from_millis(1000);
 
         let written_bytes = self
             .device_handle

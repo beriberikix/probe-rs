@@ -72,7 +72,7 @@ impl ArmDebugSequence for Sf32lb52 {
             .write_word_32(Aircr::get_mmio_address(), aircr.into())
             .await;
 
-        std::thread::sleep(std::time::Duration::from_millis(500));
+        crate::probe::usb_util::wait(std::time::Duration::from_millis(500)).await;
         interface
             .update_core_status(crate::CoreStatus::Unknown)
             .await;

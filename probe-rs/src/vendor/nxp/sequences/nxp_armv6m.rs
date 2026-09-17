@@ -6,7 +6,8 @@ use crate::architecture::arm::memory::ArmMemoryInterface;
 use crate::architecture::arm::sequences::ArmDebugSequence;
 use crate::core::MemoryMappedRegister;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 /// The sequence handle for the LPC80x family.
 #[derive(Debug)]

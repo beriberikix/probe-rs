@@ -1,5 +1,6 @@
 //! Sequences for the nRF54L family of devices.
-use std::{sync::Arc, time::Instant};
+use std::sync::Arc;
+use web_time::Instant;
 
 use crate::{
     architecture::arm::{
@@ -67,7 +68,7 @@ impl ArmDebugSequence for Nrf54L {
                 break erase_all_status;
             }
 
-            std::thread::sleep(std::time::Duration::from_millis(1));
+            crate::probe::usb_util::wait(std::time::Duration::from_millis(1)).await;
 
             if start.elapsed().as_secs() > 5 {
                 return Err(ArmError::Timeout);

@@ -1,7 +1,7 @@
 //! Sequences for NXP chips that use ARMv8-M cores.
 
 use bitfield::bitfield;
-use std::{sync::Arc, thread, time::Duration};
+use std::{sync::Arc, time::Duration};
 use web_time::Instant;
 
 use crate::{
@@ -242,7 +242,7 @@ impl ArmDebugSequence for LPC55Sxx {
         }
 
         tracing::info!("Waiting after reset");
-        thread::sleep(Duration::from_millis(10));
+        crate::probe::usb_util::wait(Duration::from_millis(10)).await;
 
         let start = Instant::now();
 
@@ -268,7 +268,7 @@ impl ArmDebugSequence for LPC55Sxx {
 async fn wait_for_stop_after_reset(memory: &mut dyn ArmMemoryInterface) -> Result<(), ArmError> {
     tracing::info!("Wait for stop after reset");
 
-    thread::sleep(Duration::from_millis(10));
+    crate::probe::usb_util::wait(Duration::from_millis(10)).await;
 
     if memory.generic_status().await?.DeviceEn {
         let dp = memory.fully_qualified_address().dp();
@@ -341,7 +341,7 @@ async fn enable_debug_mailbox(
     interface.flush().await?;
 
     // DAP_Delay(30000)
-    thread::sleep(Duration::from_millis(30));
+    crate::probe::usb_util::wait(Duration::from_millis(30)).await;
 
     let _ = interface.read_raw_ap_register(&ap, 0).await?;
 
@@ -352,7 +352,7 @@ async fn enable_debug_mailbox(
     interface.flush().await?;
 
     // DAP_Delay(30000)
-    thread::sleep(Duration::from_millis(30));
+    crate::probe::usb_util::wait(Duration::from_millis(30)).await;
 
     let _ = interface.read_raw_ap_register(&ap, 8).await?;
 
@@ -447,7 +447,7 @@ impl MIMXRT5xxS {
         // to regain debug control.
 
         // Give bootloader time to do what it needs to do
-        thread::sleep(Duration::from_millis(100));
+        crate::probe::usb_util::wait(Duration::from_millis(100)).await;
 
         let ap = probe.fully_qualified_address();
         let dp = ap.dp();
@@ -525,11 +525,11 @@ impl MIMXRT5xxS {
             interface.write_word_32(0x40004214, 0x130).await?; // full drive and pullup
             interface.write_word_32(0x40102010, 1 << 5).await?; // PIO4_5 is an output
             interface.write_word_32(0x40103214, 0).await?; // PIO4_5 is driven low
-            thread::sleep(Duration::from_millis(100));
+            crate::probe::usb_util::wait(Duration::from_millis(100)).await;
 
             interface.write_word_32(0x40102010, 0).await?; // PIO4_5 is an input
             interface.flush().await?;
-            thread::sleep(Duration::from_millis(100));
+            crate::probe::usb_util::wait(Duration::from_millis(100)).await;
         } else {
             tracing::trace!("MIMXRT685-EVK FlexSPI flash reset (pulse PIO2_12)");
 
@@ -544,11 +544,11 @@ impl MIMXRT5xxS {
             interface.write_word_32(0x40004130, 0x130).await?; // full drive and pullup
             interface.write_word_32(0x40102008, 1 << 12).await?; // PIO2_12 is an output
             interface.write_word_32(0x40102288, 1 << 12).await?; // PIO2_12 is driven low
-            thread::sleep(Duration::from_millis(100));
+            crate::probe::usb_util::wait(Duration::from_millis(100)).await;
 
             interface.write_word_32(0x40102208, 1 << 12).await?; // PIO2_12 is driven high
             interface.flush().await?;
-            thread::sleep(Duration::from_millis(100));
+            crate::probe::usb_util::wait(Duration::from_millis(100)).await;
         }
 
         Ok(())
@@ -594,14 +594,14 @@ impl MIMXRT5xxS {
         interface
             .write_raw_ap_register(ap_addr, 0x0, 0x00000021)
             .await?;
-        thread::sleep(Duration::from_millis(30));
+        crate::probe::usb_util::wait(Duration::from_millis(30)).await;
         interface.read_raw_ap_register(ap_addr, 0x0).await?;
 
         // Enter Debug Session
         interface
             .write_raw_ap_register(ap_addr, 0x4, 0x00000007)
             .await?;
-        thread::sleep(Duration::from_millis(30));
+        crate::probe::usb_util::wait(Duration::from_millis(30)).await;
         interface.read_raw_ap_register(ap_addr, 0x0).await?;
 
         tracing::debug!("entered MIMXRT5xxS debug session");
@@ -746,7 +746,7 @@ impl ArmDebugSequence for MIMXRT5xxS {
 
         let can_read_pins = probe.swj_pins(0, n_reset, 0).await? != 0xffff_ffff;
 
-        thread::sleep(Duration::from_millis(50));
+        crate::probe::usb_util::wait(Duration::from_millis(50)).await;
 
         let mut assert_n_reset = async || probe.swj_pins(n_reset, n_reset, 0).await;
 
@@ -759,7 +759,7 @@ impl ArmDebugSequence for MIMXRT5xxS {
             }
         } else {
             assert_n_reset().await?;
-            thread::sleep(Duration::from_millis(100));
+            crate::probe::usb_util::wait(Duration::from_millis(100)).await;
         }
 
         Ok(())
@@ -845,7 +845,7 @@ impl ArmDebugSequence for MIMXRT118x {
         // Doing the same seems to solve the issue ™️.
         //
         // It is pretty much the only reason why we cannot use a vanilla `cortex_m_reset_system`.
-        thread::sleep(Duration::from_millis(50));
+        crate::probe::usb_util::wait(Duration::from_millis(50)).await;
 
         let start = Instant::now();
         while start.elapsed() < Duration::from_millis(500) {

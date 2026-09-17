@@ -11,8 +11,9 @@ use crate::{
 use probe_rs_target::CoreType;
 use std::{
     sync::Arc,
-    time::{Duration, Instant},
+    time::Duration,
 };
+use web_time::Instant;
 
 /// Marker struct indicating initialization sequencing for Microchip MEC172x family parts.
 #[derive(Debug)]
@@ -69,7 +70,7 @@ impl Mec172x {
                 tracing::debug!("Exceeded timeout while waiting for the core to {action}");
                 return Err(ArmError::Timeout);
             }
-            std::thread::sleep(Duration::from_millis(1));
+            crate::probe::usb_util::wait(Duration::from_millis(1)).await;
         }
 
         Ok(())
@@ -106,7 +107,7 @@ impl Mec172x {
                 return Err(ArmError::Timeout);
             }
 
-            std::thread::sleep(Duration::from_millis(1));
+            crate::probe::usb_util::wait(Duration::from_millis(1)).await;
         }
     }
 }

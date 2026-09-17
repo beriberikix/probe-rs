@@ -14,7 +14,7 @@ use crate::{
 };
 use bitfield::bitfield;
 use probe_rs_target::CoreType;
-use std::{sync::Arc, thread, time::Duration};
+use std::{sync::Arc, time::Duration};
 use web_time::Instant;
 
 bitfield! {
@@ -333,7 +333,7 @@ impl AtSAM {
                 return Err(ArmError::Timeout);
             }
 
-            thread::sleep(Duration::from_millis(250));
+            crate::probe::usb_util::wait(Duration::from_millis(250)).await;
         }
     }
 
@@ -360,7 +360,7 @@ impl AtSAM {
         interface
             .swj_pins(pin_values.0 as u32, pins.0 as u32, 0)
             .await?;
-        thread::sleep(Duration::from_millis(10));
+        crate::probe::usb_util::wait(Duration::from_millis(10)).await;
 
         // Next release nReset, but keep SWDIO and SWCLK low. This should put the device into
         // reset extension.
@@ -368,7 +368,7 @@ impl AtSAM {
         interface
             .swj_pins(pin_values.0 as u32, pins.0 as u32, 0)
             .await?;
-        thread::sleep(Duration::from_millis(20));
+        crate::probe::usb_util::wait(Duration::from_millis(20)).await;
 
         Ok(())
     }
@@ -426,13 +426,13 @@ impl AtSAM {
         interface
             .swj_pins(pin_values.0 as u32, pins.0 as u32, 0)
             .await?;
-        thread::sleep(Duration::from_millis(10));
+        crate::probe::usb_util::wait(Duration::from_millis(10)).await;
 
         pin_values.set_nreset(true);
         interface
             .swj_pins(pin_values.0 as u32, pins.0 as u32, 0)
             .await?;
-        thread::sleep(Duration::from_millis(10));
+        crate::probe::usb_util::wait(Duration::from_millis(10)).await;
 
         Ok(())
     }
@@ -455,10 +455,10 @@ impl AtSAM {
                 pins.set_nreset(true);
 
                 interface.swj_pins(0, pins.0 as u32, 0).await?;
-                thread::sleep(Duration::from_millis(10));
+                crate::probe::usb_util::wait(Duration::from_millis(10)).await;
 
                 interface.swj_pins(pins.0 as u32, pins.0 as u32, 0).await?;
-                thread::sleep(Duration::from_millis(10));
+                crate::probe::usb_util::wait(Duration::from_millis(10)).await;
 
                 Ok(())
             }

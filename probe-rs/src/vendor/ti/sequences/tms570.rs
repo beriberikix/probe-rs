@@ -6,7 +6,8 @@
 //! then clearing memory using platform-specific register writes.
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 use crate::architecture::arm::armv7a::{
     clear_hw_breakpoint, get_hw_breakpoint, read_word_32, request_halt, run, set_hw_breakpoint,
@@ -109,7 +110,7 @@ impl ArmDebugSequence for TMS570 {
             if start.elapsed() >= HALT_DELAY {
                 return Err(ArmError::Timeout);
             }
-            std::thread::sleep(Duration::from_millis(1));
+            crate::probe::usb_util::wait(Duration::from_millis(1)).await;
         }
         write_word_32(memory, base_address, 0xffff_ff5c, 0x5).await?;
 

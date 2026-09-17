@@ -1,1 +1,13 @@
 future-size-threshold = 3000
+
+# The browser build (wasm32-unknown-unknown) panics on these; the panic kills the
+# async task, so the call hangs instead of failing. Use `probe::usb_util::wait` and
+# `web_time::Instant` instead.
+disallowed-methods = [
+  { path = "std::thread::sleep", reason = "panics on wasm32; use probe::usb_util::wait(..).await" },
+  { path = "std::time::Instant::now", reason = "panics on wasm32; use web_time::Instant" },
+  { path = "std::time::SystemTime::now", reason = "panics on wasm32; use web_time::SystemTime" },
+]
+disallowed-types = [
+  { path = "std::time::Instant", reason = "panics on wasm32; use web_time::Instant" },
+]

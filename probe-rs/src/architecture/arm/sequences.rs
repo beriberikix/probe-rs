@@ -1,6 +1,6 @@
 //! Debug sequences to operate special requirements ARM targets.
 
-use std::{error::Error, fmt::Debug, sync::Arc, thread, time::Duration};
+use std::{error::Error, fmt::Debug, sync::Arc, time::Duration};
 
 use web_time::Instant;
 
@@ -477,10 +477,10 @@ pub trait ArmDebugSequence: Send + Sync + Debug {
                 if start.elapsed() >= Duration::from_secs(1) {
                     return Err(ArmError::Timeout);
                 }
-                thread::sleep(Duration::from_millis(100));
+                crate::probe::usb_util::wait(Duration::from_millis(100)).await;
             }
         } else {
-            thread::sleep(Duration::from_millis(100));
+            crate::probe::usb_util::wait(Duration::from_millis(100)).await;
             Ok(())
         }
     }
@@ -1013,7 +1013,7 @@ pub trait ArmDebugSequence: Send + Sync + Debug {
             }
 
             // Be nice - checking at intervals is plenty
-            std::thread::sleep(RESET_RECOVERY_RETRY_INTERVAL);
+            crate::probe::usb_util::wait(RESET_RECOVERY_RETRY_INTERVAL).await;
         };
         tracing::debug!(
             "DPIDR became readable after {}ms",

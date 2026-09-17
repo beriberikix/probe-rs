@@ -69,6 +69,10 @@
 #![warn(missing_docs)]
 #![recursion_limit = "256"] // required by bitfield!
 #![cfg_attr(probers_docsrs, feature(doc_cfg))] // Used for docs.rs
+// clippy.toml bans std::thread::sleep / std::time::Instant because they panic on
+// wasm32. Natively `web_time::Instant` is a re-export of the std type, so the lints
+// would flag correct code there; they are enforced when linting for wasm32.
+#![cfg_attr(not(target_family = "wasm"), allow(clippy::disallowed_types, clippy::disallowed_methods))]
 
 pub mod architecture;
 pub mod config;

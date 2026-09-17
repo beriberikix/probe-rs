@@ -501,12 +501,24 @@ impl JLink {
         };
 
         let mut total = 0;
+        let mut empty_reads = 0;
         while total < len {
             let n = self
                 .handle
                 .read_bulk(self.read_ep, &mut dst[total..], TIMEOUT_DEFAULT)
                 .await?;
 
+            if n == 0 {
+                // A probe that keeps answering with nothing would otherwise spin forever.
+                empty_reads += 1;
+                if empty_reads >= 8 {
+                    return Err(JlinkError::Other(format!(
+                        "probe returned no data after {total} of {len} bytes"
+                    )));
+                }
+                continue;
+            }
+            empty_reads = 0;
             total += n;
         }
 
@@ -1209,7 +1221,7 @@ impl RawSwdIo for JLink {
             // Normally this would be the timeout we pass to the probe to settle the pins.
             // The J-Link is not capable of this, so we just wait for this time on the host
             // and assume it has settled until then.
-            std::thread::sleep(Duration::from_micros(pin_wait as u64));
+            crate::probe::usb_util::wait(Duration::from_micros(pin_wait as u64)).await;
 
             // We signal that we cannot read the pin state.
             Ok(0xFFFF_FFFF)
@@ -1296,7 +1308,7 @@ impl SwoAccess for JLink {
             if start.elapsed() > timeout {
                 break;
             }
-            std::thread::sleep(poll_interval);
+            crate::probe::usb_util::wait(poll_interval).await;
         }
         Ok(bytes)
     }
