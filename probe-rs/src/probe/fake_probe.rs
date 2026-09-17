@@ -665,7 +665,8 @@ impl crate::architecture::arm::communication_interface::FlushableArmAccess
     for FakeArmInterface<Initialized>
 {
     async fn flush(&mut self) -> Result<(), ArmError> {
-        todo!()
+        // Nothing is batched on the fake probe.
+        Ok(())
     }
 }
 
@@ -733,7 +734,7 @@ impl DapAccess for FakeArmInterface<Initialized> {
         _dp: DpAddress,
         _address: DpRegisterAddress,
     ) -> Result<u32, ArmError> {
-        todo!()
+        Err(ArmError::NotImplemented("DP/AP register access on the fake probe"))
     }
 
     async fn write_raw_dp_register(
@@ -742,7 +743,7 @@ impl DapAccess for FakeArmInterface<Initialized> {
         _address: DpRegisterAddress,
         _value: u32,
     ) -> Result<(), ArmError> {
-        todo!()
+        Err(ArmError::NotImplemented("DP/AP register access on the fake probe"))
     }
 
     async fn read_raw_ap_register(
@@ -759,7 +760,7 @@ impl DapAccess for FakeArmInterface<Initialized> {
         _address: u64,
         _values: &mut [u32],
     ) -> Result<(), ArmError> {
-        todo!()
+        Err(ArmError::NotImplemented("DP/AP register access on the fake probe"))
     }
 
     async fn write_raw_ap_register(
@@ -768,7 +769,7 @@ impl DapAccess for FakeArmInterface<Initialized> {
         _address: u64,
         _value: u32,
     ) -> Result<(), ArmError> {
-        todo!()
+        Err(ArmError::NotImplemented("DP/AP register access on the fake probe"))
     }
 
     async fn write_raw_ap_register_repeated(
@@ -777,7 +778,7 @@ impl DapAccess for FakeArmInterface<Initialized> {
         _address: u64,
         _values: &[u32],
     ) -> Result<(), ArmError> {
-        todo!()
+        Err(ArmError::NotImplemented("DP/AP register access on the fake probe"))
     }
 
     fn try_dap_probe(&self) -> Option<&dyn DapProbe> {

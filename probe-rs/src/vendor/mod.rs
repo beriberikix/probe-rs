@@ -31,6 +31,7 @@ pub mod infineon;
 pub mod microchip;
 pub mod nordicsemi;
 pub mod nxp;
+pub mod raspberrypi;
 pub mod sifli;
 pub mod silabs;
 pub mod st;
@@ -83,6 +84,7 @@ static VENDORS: LazyLock<RwLock<Vec<Box<dyn Vendor>>>> = LazyLock::new(|| {
         Box::new(espressif::Espressif),
         Box::new(nordicsemi::NordicSemi),
         Box::new(nxp::Nxp),
+        Box::new(raspberrypi::RaspberryPi),
         Box::new(st::St),
         Box::new(vorago::Vorago),
         Box::new(sifli::Sifli),
@@ -156,7 +158,12 @@ fn try_detect_arm_chip(registry: Arc<Registry>, mut probe: Probe) -> DetectFutur
                                 None
                             });
 
-                    if let Some(found_chip) = found_arm_chip {
+                    // Resolve the target without `?`, so the interface is always closed and
+                    // the probe handed back before an error propagates.
+                    let resolved: Result<Option<Target>, Error> = async {
+                        let Some(found_chip) = found_arm_chip else {
+                            return Ok(None);
+                        };
                         let vendors = vendors();
                         for vendor in vendors.iter() {
                             // TODO: only consider families with matching JEP106.
@@ -164,19 +171,22 @@ fn try_detect_arm_chip(registry: Arc<Registry>, mut probe: Probe) -> DetectFutur
                                 .try_detect_arm_chip(&registry, interface.as_mut(), found_chip)
                                 .await?
                             {
-                                found_target = Some(registry.get_target_by_name(&target_name)?);
-                                break;
+                                return Ok(Some(registry.get_target_by_name(&target_name)?));
                             }
                         }
-
-                        // No vendor-specific match, try to find a target by chip info.
-                        if found_target.is_none() {
-                            found_target =
-                                Some(registry.get_target_by_chip_info(ChipInfo::from(found_chip))?);
+                        // No vendor-specific match, try to find a target by chip info. A ROM
+                        // table designed by Arm (JEP106 0x3b/4) identifies the core, not the
+                        // chip, so it cannot pick a target on its own (an nRF9160 matched RP235x).
+                        if found_chip.manufacturer == jep106::JEP106Code::new(0x4, 0x3b) {
+                            tracing::debug!("ROM table is Arm-designed; not guessing a target from part {:#x}", found_chip.part);
+                            return Ok(None);
                         }
+                        Ok(Some(registry.get_target_by_chip_info(ChipInfo::from(found_chip))?))
                     }
+                    .await;
 
                     probe = interface.close().await;
+                    found_target = resolved?;
                 }
                 Err((returned_probe, error)) => {
                     probe = returned_probe;
@@ -194,6 +204,11 @@ async fn try_detect_riscv_chip(
     probe: &mut Probe,
 ) -> Result<Option<Target>, Error> {
     let mut found_target = None;
+
+    if !probe.has_riscv_interface() {
+        tracing::debug!("No RISC-V interface available, skipping detection.");
+        return Ok(None);
+    }
 
     if let Some(probe) = probe.try_as_jtag_probe() {
         _ = probe.select_target(0);
@@ -248,6 +263,11 @@ async fn try_detect_xtensa_chip(
     probe: &mut Probe,
 ) -> Result<Option<Target>, Error> {
     let mut found_target = None;
+
+    if !probe.has_xtensa_interface() {
+        tracing::debug!("No Xtensa interface available, skipping detection.");
+        return Ok(None);
+    }
 
     if let Some(probe) = probe.try_as_jtag_probe() {
         _ = probe.select_target(0);
@@ -307,17 +327,25 @@ pub(crate) async fn auto_determine_target(
     // ARM way of moving in and out of the probe.
     fn try_detect_riscv_chip_wrapper(registry: Arc<Registry>, mut probe: Probe) -> DetectFuture {
         Box::pin(async move {
-            try_detect_riscv_chip(&registry, &mut probe)
+            let found_target = try_detect_riscv_chip(&registry, &mut probe)
                 .await
-                .map(|found_target| (probe, found_target))
+                .unwrap_or_else(|error| {
+                    tracing::debug!("Error during RISC-V chip auto-detection: {error}");
+                    None
+                });
+            Ok((probe, found_target))
         })
     }
 
     fn try_detect_xtensa_chip_wrapper(registry: Arc<Registry>, mut probe: Probe) -> DetectFuture {
         Box::pin(async move {
-            try_detect_xtensa_chip(&registry, &mut probe)
+            let found_target = try_detect_xtensa_chip(&registry, &mut probe)
                 .await
-                .map(|found_target| (probe, found_target))
+                .unwrap_or_else(|error| {
+                    tracing::debug!("Error during Xtensa chip auto-detection: {error}");
+                    None
+                });
+            Ok((probe, found_target))
         })
     }
 

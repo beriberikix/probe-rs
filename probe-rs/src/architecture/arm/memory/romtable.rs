@@ -1,12 +1,5 @@
 //! CoreSight ROM table parsing and handling.
 
-use std::{
-    pin::Pin,
-    task::{Context, Poll},
-};
-
-use futures_lite::{FutureExt, Stream};
-
 use crate::architecture::arm::{
     ArmError, FullyQualifiedApAddress, ap::AccessPortError,
     communication_interface::ArmProbeInterface, memory::ArmMemoryInterface,
@@ -43,83 +36,6 @@ impl RomTableError {
     }
 }
 
-/// A lazy romtable reader that is used to create an iterator over all romtable entries.
-struct RomTableReader<'probe: 'memory, 'memory> {
-    base_address: u64,
-    memory: &'memory mut (dyn ArmMemoryInterface + 'probe),
-}
-
-/// Iterates over a ROM table non recursively.
-impl<'probe: 'memory, 'memory> RomTableReader<'probe, 'memory> {
-    fn new(memory: &'memory mut (dyn ArmMemoryInterface + 'probe), base_address: u64) -> Self {
-        RomTableReader {
-            base_address,
-            memory,
-        }
-    }
-
-    /// Iterate over all entries of the rom table, non-recursively
-    fn entries(&mut self) -> RomTableIterator<'probe, 'memory, '_> {
-        RomTableIterator::new(self)
-    }
-}
-
-/// An iterator to lazily iterate over all the romtable entries in memory.
-///
-/// For internal use only.
-struct RomTableIterator<'probe: 'memory, 'memory: 'reader, 'reader> {
-    rom_table_reader: &'reader mut RomTableReader<'probe, 'memory>,
-    offset: u64,
-}
-
-impl<'probe: 'memory, 'memory: 'reader, 'reader> RomTableIterator<'probe, 'memory, 'reader> {
-    /// Creates a new lazy romtable iterator.
-    fn new(reader: &'reader mut RomTableReader<'probe, 'memory>) -> Self {
-        RomTableIterator {
-            rom_table_reader: reader,
-            offset: 0,
-        }
-    }
-}
-
-impl Stream for RomTableIterator<'_, '_, '_> {
-    type Item = Result<RomTableEntryRaw, RomTableError>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let component_address = self.rom_table_reader.base_address + self.offset;
-        tracing::debug!("Reading rom table entry at {:#010x}", component_address);
-
-        self.offset += 4;
-
-        let mut entry_data = 0u32;
-
-        let mut f = self
-            .rom_table_reader
-            .memory
-            .read_32(component_address, std::slice::from_mut(&mut entry_data));
-
-        match f.poll(cx) {
-            Poll::Ready(Err(e)) => return Poll::Ready(Some(Err(RomTableError::memory(e)))),
-            Poll::Ready(Ok(())) => {
-                drop(f);
-            }
-            Poll::Pending => return Poll::Pending,
-        }
-
-        // End of entries is marked by an all zero entry
-        if entry_data == 0 {
-            tracing::debug!("Entry consists of all zeroes, stopping.");
-            return Poll::Ready(None);
-        }
-
-        let entry_data =
-            RomTableEntryRaw::new(self.rom_table_reader.base_address as u32, entry_data);
-
-        tracing::debug!("ROM Table Entry: {:#x?}", entry_data);
-        Poll::Ready(Some(Ok(entry_data)))
-    }
-}
-
 /// Encapsulates information about a CoreSight ROM table (class 1).
 #[derive(Clone, Debug, PartialEq)]
 pub struct RomTable {
@@ -144,12 +60,28 @@ impl RomTable {
 
         // Read all the raw romtable entries and flatten them.
 
-        // This is not a needless collect! It fixes the borrowing issue with &mut Memory that clippy cannot detect!
-        use futures_lite::StreamExt;
-        let reader: Vec<_> = RomTableReader::new(memory, base_address)
-            .entries()
-            .try_collect()
-            .await?;
+        // A plain loop, not a hand-written `Stream`: polling the read future once and
+        // dropping it on `Pending` abandoned the USB transfer and hung the task.
+        let mut reader = Vec::new();
+        let mut offset = 0u64;
+        loop {
+            let entry_address = base_address + offset;
+            tracing::debug!("Reading rom table entry at {:#010x}", entry_address);
+            let mut entry_data = 0u32;
+            memory
+                .read_32(entry_address, std::slice::from_mut(&mut entry_data))
+                .await
+                .map_err(RomTableError::memory)?;
+            // End of entries is marked by an all zero entry
+            if entry_data == 0 {
+                tracing::debug!("Entry consists of all zeroes, stopping.");
+                break;
+            }
+            let entry = RomTableEntryRaw::new(base_address as u32, entry_data);
+            tracing::debug!("ROM Table Entry: {:#x?}", entry);
+            reader.push(entry);
+            offset += 4;
+        }
 
         // Iterate all entries and get their data.
         for (i, raw_entry) in reader.into_iter().enumerate() {

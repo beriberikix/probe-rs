@@ -575,9 +575,13 @@ impl ArmCommunicationInterface<Initialized> {
                 s.set_addr(((address >> 4) & 0xFFFF_FFFF) as u32);
                 s1.set_addr((address >> 32) as u32);
             }
-            _ => unreachable!(
-                "Did not expect to be called with {ap:x?}. This is a bug, please report it."
-            ),
+            // An ADIv6 address on an ADIv5 DP (or the reverse), e.g. a detection hook
+            // probing for a chip family: report it instead of panicking, which on wasm
+            // kills the worker.
+            _ => {
+                tracing::debug!("AP address {ap:x?} does not match the DP version");
+                return Err(ArmError::WrongApVersion);
+            }
         }
 
         if previous_select != dp_state.current_select {
