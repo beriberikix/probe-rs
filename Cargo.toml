@@ -25,7 +25,9 @@ members = [
 exclude = ["probe-rs/tests/gpio-hal-blinky"]
 
 [workspace.dependencies]
-probe-rs = { path = "probe-rs", version = "0.28.0" }
+# Without default features, so wasm32 members do not inherit CMSIS-DAP v1 (hidapi, a C
+# library) through feature unification. Native members opt back in below.
+probe-rs = { path = "probe-rs", version = "0.28.0", default-features = false }
 probe-rs-target = { path = "probe-rs-target", version = "0.28.0" }
 probe-rs-mi = { path = "probe-rs-mi", version = "0.1.0" }
 

@@ -9,7 +9,7 @@ repository.workspace = true
 
 [dependencies]
 env_logger = "0.11"
-probe-rs.workspace = true
+probe-rs = { workspace = true, features = ["builtin-targets", "cmsisdap_v1"] }
 anyhow.workspace = true
 clap = { version = "4", features = ["cargo", "derive"] }
 
