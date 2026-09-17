@@ -247,6 +247,7 @@ pub enum ProbeCreationError {
     CouldNotOpen(#[source] anyhow::Error),
 
     /// An HID API occurred.
+    #[cfg(feature = "cmsisdap_v1")]
     HidApi(#[from] hidapi::HidError),
 
     /// A USB error occurred.

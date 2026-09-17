@@ -1072,7 +1072,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8d162beedaa69905488a8da94f5ac3edb4dd4788b732fadb7bd120b2625c1976"
 dependencies = [
  "data-encoding",
- "syn 1.0.109",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -1196,7 +1196,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1767,6 +1767,7 @@ checksum = "befe65164a090041cdf6e0d21a0ec3198d856fbfe2b76e324a073e790bb49f8c"
 [[package]]
 name = "hidapi"
 version = "2.5.1"
+source = "git+https://github.com/Yatekii/hidapi-rs?rev=cded1473ceabaf286a484c979dae86e1430fb74d#cded1473ceabaf286a484c979dae86e1430fb74d"
 dependencies = [
  "cc",
  "cfg-if",
