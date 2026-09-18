@@ -809,6 +809,22 @@ impl DebugInfo {
                 };
             }
 
+            // Unwind info describes what the compiler recorded; anything the architecture keeps
+            // elsewhere (the Xtensa register-spill area) is recovered here, or every frame would
+            // keep the innermost frame's return address and stack pointer.
+            if let ControlFlow::Break(error) = exception_handler
+                .unwind_frame_registers(&mut unwind_registers, memory)
+                .await
+            {
+                if let Some(error) = error {
+                    tracing::warn!("UNWIND: {error}");
+                }
+                if let Some(first_frame) = stack_frames.last_mut() {
+                    first_frame.canonical_frame_address = cfa;
+                }
+                break 'unwind;
+            }
+
             // With the Xtensa windowed ABI, the callee's a0 already holds the return address into
             // the caller; the unwound a0 (from the window spill area) is the caller's own return
             // address. Using it here would skip the caller frame.

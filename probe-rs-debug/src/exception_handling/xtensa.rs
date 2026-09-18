@@ -21,6 +21,19 @@ impl ExceptionInterface for XtensaExceptionHandler {
     ) -> ControlFlow<Option<DebugError>> {
         // Use the default method to unwind PC.
         unwind_pc_without_debuginfo(unwind_registers, frame_pc, instruction_set)?;
+        self.unwind_frame_registers(unwind_registers, memory).await
+    }
+
+    /// Recover the caller's registers from the callee's register-spill area.
+    ///
+    /// This is how the windowed ABI saves them, and it is the only place they are once the
+    /// windows have been spilled — DWARF does not describe them, so a stack trace that relies on
+    /// unwind info alone keeps the innermost frame's return address for every frame.
+    async fn unwind_frame_registers(
+        &self,
+        unwind_registers: &mut DebugRegisters,
+        memory: &mut dyn MemoryInterface,
+    ) -> ControlFlow<Option<DebugError>> {
 
         // WindowUnderflow12:
         // // On entry here: a0-a11 are call[i].reg[0..11] and initially contain garbage, a12-a15 are call[i+1].reg[0..3],

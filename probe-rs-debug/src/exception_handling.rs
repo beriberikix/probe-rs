@@ -104,6 +104,21 @@ pub trait ExceptionInterface {
     /// Unwind the stack without debug info.
     ///
     /// This method can be implemented to provide a stack trace using frame pointers, for example.
+    /// Recover the calling frame's registers from the architecture's own calling convention,
+    /// for the registers DWARF does not describe.
+    ///
+    /// Unwind info restores what the compiler chose to record; on a windowed register file
+    /// (Xtensa) the caller's return address and stack pointer live in the callee's register-spill
+    /// area, and without reading them every frame keeps the innermost frame's values — so a stack
+    /// trace repeats the first caller for ever. Architectures that need nothing do nothing.
+    async fn unwind_frame_registers(
+        &self,
+        _unwind_registers: &mut DebugRegisters,
+        _memory: &mut dyn MemoryInterface,
+    ) -> ControlFlow<Option<DebugError>> {
+        ControlFlow::Continue(())
+    }
+
     async fn unwind_without_debuginfo(
         &self,
         unwind_registers: &mut DebugRegisters,
